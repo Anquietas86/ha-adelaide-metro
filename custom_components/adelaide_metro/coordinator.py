@@ -17,6 +17,12 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _translated_text(translated) -> str | None:
+    if not translated or not translated.translation:
+        return None
+    return translated.translation[0].text or None
+
+
 class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
     def __init__(self, hass, entry):
         self.entry = entry
@@ -40,6 +46,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             self.stop_index, self.route_index, self.trip_index = await self.api.async_fetch_static_gtfs()
 
         feed = await self.api.async_fetch_trip_updates()
+        alerts_feed = await self.api.async_fetch_service_alerts()
         now = datetime.now(UTC).timestamp()
         departures_by_stop: dict[str, list[dict]] = {stop_id: [] for stop_id in self.stops}
 
@@ -93,9 +100,35 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             deps.sort(key=lambda d: d["time"])
             departures_by_stop[stop_id] = deps[: self.max_departures]
 
+        alerts: list[dict] = []
+        for entity in alerts_feed.entity:
+            if not entity.HasField("alert"):
+                continue
+            alert = entity.alert
+            informed = []
+            for selector in alert.informed_entity:
+                informed.append(
+                    {
+                        "route_id": selector.route_id or None,
+                        "stop_id": selector.stop_id or None,
+                    }
+                )
+            alerts.append(
+                {
+                    "id": entity.id,
+                    "header": _translated_text(alert.header_text),
+                    "description": _translated_text(alert.description_text),
+                    "url": _translated_text(alert.url),
+                    "cause": int(alert.cause) if alert.HasField("cause") else None,
+                    "effect": int(alert.effect) if alert.HasField("effect") else None,
+                    "informed_entities": informed,
+                }
+            )
+
         return {
             "stops": self.stop_index,
             "routes": self.route_index,
             "trips": self.trip_index,
             "departures": departures_by_stop,
+            "alerts": alerts,
         }

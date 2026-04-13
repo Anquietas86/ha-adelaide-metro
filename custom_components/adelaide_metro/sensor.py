@@ -13,7 +13,7 @@ from .const import DOMAIN
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    entities = []
+    entities = [AdelaideMetroAlertsSensor(coordinator)]
     for stop_id in coordinator.stops:
         entities.append(AdelaideMetroNextDepartureSensor(coordinator, stop_id))
         entities.append(AdelaideMetroUpcomingDeparturesSensor(coordinator, stop_id))
@@ -101,3 +101,29 @@ class AdelaideMetroUpcomingDeparturesSensor(AdelaideMetroBaseSensor):
     @property
     def native_value(self):
         return len(self._departures)
+
+
+class AdelaideMetroAlertsSensor(CoordinatorEntity, SensorEntity):
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_name = "Service alerts"
+        self._attr_unique_id = "adelaide_metro_service_alerts"
+        self._attr_icon = "mdi:alert-circle-outline"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, "network")},
+            "name": "Adelaide Metro",
+            "manufacturer": "Adelaide Metro",
+            "model": "GTFS Realtime Feed",
+        }
+
+    @property
+    def native_value(self):
+        return len(self.coordinator.data.get("alerts", []))
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "alerts": self.coordinator.data.get("alerts", []),
+        }

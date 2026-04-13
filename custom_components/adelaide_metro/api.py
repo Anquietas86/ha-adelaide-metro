@@ -8,7 +8,7 @@ import zipfile
 from google.transit import gtfs_realtime_pb2
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import STATIC_GTFS_URL, TRIP_UPDATES_URL
+from .const import SERVICE_ALERTS_URL, STATIC_GTFS_URL, TRIP_UPDATES_URL
 
 
 @dataclass
@@ -50,6 +50,15 @@ class AdelaideMetroApiClient:
 
     async def async_fetch_trip_updates(self):
         async with self._session.get(TRIP_UPDATES_URL) as resp:
+            resp.raise_for_status()
+            data = await resp.read()
+
+        feed = gtfs_realtime_pb2.FeedMessage()
+        feed.ParseFromString(data)
+        return feed
+
+    async def async_fetch_service_alerts(self):
+        async with self._session.get(SERVICE_ALERTS_URL) as resp:
             resp.raise_for_status()
             data = await resp.read()
 
