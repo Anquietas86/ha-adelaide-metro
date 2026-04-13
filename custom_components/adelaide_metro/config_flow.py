@@ -46,7 +46,7 @@ class AdelaideMetroConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id("|".join(sorted(stops)))
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
-                    title=f"Adelaide Metro ({', '.join(stops[:2])}{'...' if len(stops) > 2 else ''})",
+                    title="Adelaide Metro Realtime",
                     data={
                         CONF_STOPS: stops,
                         CONF_ROUTE_FILTERS: routes,
