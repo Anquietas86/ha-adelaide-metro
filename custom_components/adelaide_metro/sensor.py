@@ -1,18 +1,36 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import logging
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
-from .const import DOMAIN
+from .const import CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS, DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _expose_entity_to_voice_assistants(hass: HomeAssistant, entity_id: str) -> None:
+    registry = er.async_get(hass)
+    if entity_id and registry.async_get(entity_id):
+        try:
+            registry.async_update_entity_options(entity_id, "conversation", {"should_expose": True})
+            registry.async_update_entity_options(entity_id, "cloud.google_assistant", {"should_expose": True})
+        except Exception as e:
+            _LOGGER.debug("Could not expose %s to voice assistants: %s", entity_id, e)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    expose_to_assistants = entry.options.get(
+        CONF_EXPOSE_TO_ASSISTANTS, entry.data.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS)
+    )
+
     entities = [AdelaideMetroAlertsSensor(coordinator)]
     for stop_id in coordinator.stops:
         entities.append(AdelaideMetroNextDepartureSensor(coordinator, stop_id))
@@ -23,6 +41,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         entities.append(AdelaideMetroAlertEntity(coordinator, alert))
 
     async_add_entities(entities)
+
+    if expose_to_assistants:
+        await hass.async_add_executor_job(_apply_assistant_exposure, hass, DOMAIN)
+
+
+def _apply_assistant_exposure(hass: HomeAssistant, domain: str) -> None:
+    registry = er.async_get(hass)
+    for entity in list(registry.entities.values()):
+        if entity.platform != domain:
+            continue
+        _expose_entity_to_voice_assistants(hass, entity.entity_id)
 
 
 def _filter_relevant_alerts(coordinator):

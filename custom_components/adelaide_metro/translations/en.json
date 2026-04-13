@@ -8,7 +8,8 @@
           "stops": "Stop IDs (comma separated)",
           "route_filters": "Route filters (comma separated, optional)",
           "max_departures": "Maximum departures to keep",
-          "refresh_interval": "Refresh interval in seconds"
+          "refresh_interval": "Refresh interval in seconds",
+          "expose_to_assistants": "Expose to assistants"
         }
       }
     },
@@ -25,12 +26,13 @@
     "step": {
       "init": {
         "title": "Adelaide Metro options",
-        "description": "Edit stops, route filters, and update behavior.",
+        "description": "Edit stops, route filters, update behavior, and assistant exposure.",
         "data": {
           "stops": "Stop IDs (comma separated)",
           "route_filters": "Route filters (comma separated, optional)",
           "max_departures": "Maximum departures to keep",
-          "refresh_interval": "Refresh interval in seconds"
+          "refresh_interval": "Refresh interval in seconds",
+          "expose_to_assistants": "Expose to assistants"
         }
       }
     },

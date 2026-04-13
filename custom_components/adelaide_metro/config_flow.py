@@ -9,10 +9,12 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
+    CONF_EXPOSE_TO_ASSISTANTS,
     CONF_MAX_DEPARTURES,
     CONF_REFRESH_INTERVAL,
     CONF_ROUTE_FILTERS,
     CONF_STOPS,
+    DEFAULT_EXPOSE_TO_ASSISTANTS,
     DEFAULT_MAX_DEPARTURES,
     DEFAULT_REFRESH_INTERVAL,
     DOMAIN,
@@ -50,6 +52,7 @@ class AdelaideMetroConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_ROUTE_FILTERS: routes,
                         CONF_MAX_DEPARTURES: user_input[CONF_MAX_DEPARTURES],
                         CONF_REFRESH_INTERVAL: user_input[CONF_REFRESH_INTERVAL],
+                        CONF_EXPOSE_TO_ASSISTANTS: user_input.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS),
                     },
                 )
 
@@ -59,6 +62,7 @@ class AdelaideMetroConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_ROUTE_FILTERS, default=""): str,
                 vol.Optional(CONF_MAX_DEPARTURES, default=DEFAULT_MAX_DEPARTURES): int,
                 vol.Optional(CONF_REFRESH_INTERVAL, default=DEFAULT_REFRESH_INTERVAL): int,
+                vol.Optional(CONF_EXPOSE_TO_ASSISTANTS, default=DEFAULT_EXPOSE_TO_ASSISTANTS): bool,
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
@@ -86,6 +90,7 @@ class AdelaideMetroOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         CONF_ROUTE_FILTERS: routes,
                         CONF_MAX_DEPARTURES: user_input[CONF_MAX_DEPARTURES],
                         CONF_REFRESH_INTERVAL: user_input[CONF_REFRESH_INTERVAL],
+                        CONF_EXPOSE_TO_ASSISTANTS: user_input.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS),
                     },
                 )
 
@@ -96,6 +101,7 @@ class AdelaideMetroOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 vol.Optional(CONF_ROUTE_FILTERS, default=", ".join(current.get(CONF_ROUTE_FILTERS, []))): str,
                 vol.Optional(CONF_MAX_DEPARTURES, default=current.get(CONF_MAX_DEPARTURES, DEFAULT_MAX_DEPARTURES)): int,
                 vol.Optional(CONF_REFRESH_INTERVAL, default=current.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL)): int,
+                vol.Optional(CONF_EXPOSE_TO_ASSISTANTS, default=current.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS)): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
