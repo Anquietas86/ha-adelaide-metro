@@ -7,7 +7,7 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 
 from .const import CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS, DOMAIN
@@ -90,6 +90,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     async_add_entities(entities)
 
+    @callback
     def _handle_coordinator_update() -> None:
         nonlocal known_alert_ids
         current_alerts = _filter_relevant_alerts(coordinator)
@@ -105,9 +106,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 if (a.get("id") or "unknown") in new_ids
             ]
             async_add_entities(new_entities)
-            if expose_to_assistants:
-                hass.async_add_executor_job(_apply_assistant_exposure, hass, DOMAIN)
             _LOGGER.debug("Added %d new alert entities: %s", len(new_entities), new_ids)
+            if expose_to_assistants:
+                hass.async_add_job(_apply_assistant_exposure, hass, DOMAIN)
 
         if stale_ids:
             registry = er.async_get(hass)
@@ -116,9 +117,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
                 if entity_id:
                     registry.async_remove(entity_id)
-                    _LOGGER.debug("Removed stale alert entity: %s", entity_id)
+                    _LOGGER.debug("Removed stale alert entity: %s (%s)", entity_id, alert_id)
 
-        known_alert_ids = current_ids
+        known_alert_ids.clear()
+        known_alert_ids.update(current_ids)
 
     coordinator.async_add_listener(_handle_coordinator_update)
 
@@ -260,7 +262,7 @@ class AdelaideMetroAlertEntity(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self):
         alert = self._current_alert()
-        return alert.get("header") or "Active" if alert else None
+        return (alert.get("header") or "Active") if alert else None
 
     @property
     def available(self):
