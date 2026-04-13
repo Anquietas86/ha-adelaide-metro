@@ -183,7 +183,7 @@ class AdelaideMetroAlertsSensor(CoordinatorEntity, SensorEntity):
         self._attr_icon = "mdi:alert-circle-outline"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, "network")},
-            "name": "Adelaide Metro",
+            "name": "Service Alerts",
             "manufacturer": "Adelaide Metro",
             "model": "GTFS Realtime Feed",
         }
@@ -211,7 +211,7 @@ class AdelaideMetroAlertEntity(CoordinatorEntity, SensorEntity):
         self._attr_icon = "mdi:alert"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, "network")},
-            "name": "Adelaide Metro",
+            "name": "Service Alerts",
             "manufacturer": "Adelaide Metro",
             "model": "GTFS Realtime Feed",
         }
