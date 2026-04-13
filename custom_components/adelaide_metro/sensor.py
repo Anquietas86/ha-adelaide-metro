@@ -43,25 +43,16 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
         if not self._departures:
             return None
         dep = self._departures[0]
-        route_name = dep.get("route_short_name") or dep.get("route_id") or "service"
+        headsign = dep.get("trip_headsign")
+        if headsign:
+            return f"{headsign}-bound"
+
         direction_id = dep.get("direction_id")
-
-        stop_name = (self._stop.stop_name if self._stop and self._stop.stop_name else "").lower()
-        route_long_name = (dep.get("route_long_name") or "").lower()
-
-        if "railway station" in stop_name:
-            if direction_id == 0:
-                return "City-bound"
-            if direction_id == 1:
-                return "Outbound"
-
-        if direction_id is None:
-            return str(route_name)
-
-        if route_long_name:
-            return route_long_name.title()
-
-        return f"Route {route_name} direction {direction_id}"
+        if direction_id == 0:
+            return "City-bound"
+        if direction_id == 1:
+            return "Outbound"
+        return None
 
     @property
     def _device_name(self) -> str:

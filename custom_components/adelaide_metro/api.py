@@ -34,6 +34,15 @@ class RouteInfo:
     route_text_color: str | None
 
 
+@dataclass
+class TripInfo:
+    trip_id: str
+    route_id: str | None
+    trip_headsign: str | None
+    direction_id: str | None
+    wheelchair_accessible: str | None
+
+
 class AdelaideMetroApiClient:
     def __init__(self, hass):
         self.hass = hass
@@ -48,7 +57,7 @@ class AdelaideMetroApiClient:
         feed.ParseFromString(data)
         return feed
 
-    async def async_fetch_static_gtfs(self) -> tuple[dict[str, StopInfo], dict[str, RouteInfo]]:
+    async def async_fetch_static_gtfs(self) -> tuple[dict[str, StopInfo], dict[str, RouteInfo], dict[str, TripInfo]]:
         async with self._session.get(STATIC_GTFS_URL) as resp:
             resp.raise_for_status()
             data = await resp.read()
@@ -56,7 +65,8 @@ class AdelaideMetroApiClient:
         zf = zipfile.ZipFile(BytesIO(data))
         stops = self._read_stops(zf)
         routes = self._read_routes(zf)
-        return stops, routes
+        trips = self._read_trips(zf)
+        return stops, routes, trips
 
     def _read_stops(self, zf: zipfile.ZipFile) -> dict[str, StopInfo]:
         with zf.open("stops.txt") as f:
@@ -98,3 +108,21 @@ class AdelaideMetroApiClient:
                     route_text_color=row.get("route_text_color") or None,
                 )
         return routes
+
+    def _read_trips(self, zf: zipfile.ZipFile) -> dict[str, TripInfo]:
+        with zf.open("trips.txt") as f:
+            decoded = (line.decode("utf-8-sig") for line in f)
+            reader = csv.DictReader(decoded)
+            trips: dict[str, TripInfo] = {}
+            for row in reader:
+                trip_id = row.get("trip_id")
+                if not trip_id:
+                    continue
+                trips[trip_id] = TripInfo(
+                    trip_id=trip_id,
+                    route_id=row.get("route_id") or None,
+                    trip_headsign=row.get("trip_headsign") or None,
+                    direction_id=row.get("direction_id") or None,
+                    wheelchair_accessible=row.get("wheelchair_accessible") or None,
+                )
+        return trips

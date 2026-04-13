@@ -26,6 +26,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         self.max_departures = entry.data[CONF_MAX_DEPARTURES]
         self.stop_index = {}
         self.route_index = {}
+        self.trip_index = {}
 
         super().__init__(
             hass,
@@ -36,7 +37,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         if not self.stop_index:
-            self.stop_index, self.route_index = await self.api.async_fetch_static_gtfs()
+            self.stop_index, self.route_index, self.trip_index = await self.api.async_fetch_static_gtfs()
 
         feed = await self.api.async_fetch_trip_updates()
         now = datetime.now(UTC).timestamp()
@@ -54,6 +55,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             vehicle_id = trip_update.vehicle.id if trip_update.HasField("vehicle") else None
             vehicle_label = trip_update.vehicle.label if trip_update.HasField("vehicle") else None
             route = self.route_index.get(route_id)
+            trip = self.trip_index.get(trip_update.trip.trip_id)
 
             for stu in trip_update.stop_time_update:
                 stop_id = stu.stop_id
@@ -75,6 +77,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
                         "route_id": route_id,
                         "route_short_name": route.route_short_name if route else None,
                         "route_long_name": route.route_long_name if route else None,
+                        "trip_headsign": trip.trip_headsign if trip else None,
                         "direction_id": trip_update.trip.direction_id,
                         "stop_id": stop_id,
                         "stop_sequence": stu.stop_sequence if stu.stop_sequence else None,
@@ -93,5 +96,6 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         return {
             "stops": self.stop_index,
             "routes": self.route_index,
+            "trips": self.trip_index,
             "departures": departures_by_stop,
         }
