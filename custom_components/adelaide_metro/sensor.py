@@ -148,17 +148,26 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def _direction_suffix(self) -> str | None:
-        if not self._departures:
-            return None
-        dep = self._departures[0]
-        headsign = dep.get("trip_headsign")
-        if headsign:
-            return f"{headsign}-bound"
-        direction_id = dep.get("direction_id")
-        if direction_id == 0:
-            return "City-bound"
-        if direction_id == 1:
-            return "Outbound"
+        """Derive stable direction label from static GTFS stop_directions lookup."""
+        direction_headsigns = self.coordinator.direction_headsigns
+        stop_directions = self.coordinator.stop_directions
+
+        # Primary: use static stop_directions (stop_id -> (route_id, direction_id))
+        route_dir = stop_directions.get(self._stop_id)
+        if route_dir:
+            headsign = direction_headsigns.get(route_dir)
+            if headsign:
+                return f"{headsign}-bound"
+
+        # Fallback: use live departure data if static lookup missed
+        if self._departures:
+            dep = self._departures[0]
+            route_id = dep.get("route_id")
+            direction_id = str(dep.get("direction_id", ""))
+            headsign = direction_headsigns.get((route_id, direction_id)) or dep.get("trip_headsign")
+            if headsign:
+                return f"{headsign}-bound"
+
         return None
 
     @property
@@ -192,7 +201,7 @@ class AdelaideMetroNextDepartureSensor(AdelaideMetroBaseSensor):
     @property
     def native_value(self):
         if not self._departures:
-            return None
+            return 0
         next_time = self._departures[0]["time"]
         delta = int((next_time - datetime.now(UTC).timestamp()) // 60)
         return max(delta, 0)

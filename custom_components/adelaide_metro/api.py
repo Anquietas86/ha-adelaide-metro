@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 import csv
 import zipfile
+from collections import defaultdict
 
 from google.transit import gtfs_realtime_pb2
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -66,7 +67,13 @@ class AdelaideMetroApiClient:
         feed.ParseFromString(data)
         return feed
 
-    async def async_fetch_static_gtfs(self) -> tuple[dict[str, StopInfo], dict[str, RouteInfo], dict[str, TripInfo]]:
+    async def async_fetch_static_gtfs(self) -> tuple[
+        dict[str, StopInfo],
+        dict[str, RouteInfo],
+        dict[str, TripInfo],
+        dict[tuple[str, str], str],
+        dict[str, tuple[str, str]],
+    ]:
         async with self._session.get(STATIC_GTFS_URL) as resp:
             resp.raise_for_status()
             data = await resp.read()
@@ -75,7 +82,9 @@ class AdelaideMetroApiClient:
         stops = self._read_stops(zf)
         routes = self._read_routes(zf)
         trips = self._read_trips(zf)
-        return stops, routes, trips
+        direction_headsigns = self._read_direction_headsigns(zf)
+        stop_directions = self._read_stop_directions(zf, trips)
+        return stops, routes, trips, direction_headsigns, stop_directions
 
     def _read_stops(self, zf: zipfile.ZipFile) -> dict[str, StopInfo]:
         with zf.open("stops.txt") as f:
@@ -135,3 +144,33 @@ class AdelaideMetroApiClient:
                     wheelchair_accessible=row.get("wheelchair_accessible") or None,
                 )
         return trips
+
+    def _read_direction_headsigns(self, zf: zipfile.ZipFile) -> dict[tuple[str, str], str]:
+        """Build a (route_id, direction_id) -> canonical headsign lookup from trips.txt."""
+        headsigns: dict[tuple[str, str], set[str]] = defaultdict(set)
+        with zf.open("trips.txt") as f:
+            decoded = (line.decode("utf-8-sig") for line in f)
+            reader = csv.DictReader(decoded)
+            for row in reader:
+                route_id = row.get("route_id")
+                direction_id = row.get("direction_id")
+                headsign = row.get("trip_headsign")
+                if route_id and direction_id is not None and headsign:
+                    headsigns[(route_id, direction_id)].add(headsign)
+        # Pick the most common / first headsign per (route, direction)
+        return {k: sorted(v)[0] for k, v in headsigns.items()}
+
+    def _read_stop_directions(self, zf: zipfile.ZipFile, trips: dict[str, TripInfo]) -> dict[str, tuple[str, str]]:
+        """Build a stop_id -> (route_id, direction_id) lookup from stop_times.txt."""
+        stop_directions: dict[str, set[tuple[str, str]]] = defaultdict(set)
+        with zf.open("stop_times.txt") as f:
+            decoded = (line.decode("utf-8-sig") for line in f)
+            reader = csv.DictReader(decoded)
+            for row in reader:
+                trip_id = row.get("trip_id")
+                stop_id = row.get("stop_id")
+                trip = trips.get(trip_id)
+                if trip and stop_id and trip.route_id and trip.direction_id is not None:
+                    stop_directions[stop_id].add((trip.route_id, trip.direction_id))
+        # Each stop typically maps to one (route, direction) — take first
+        return {stop_id: sorted(dirs)[0] for stop_id, dirs in stop_directions.items() if dirs}

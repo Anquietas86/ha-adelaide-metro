@@ -35,6 +35,8 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         self.stop_index = {}
         self.route_index = {}
         self.trip_index = {}
+        self.direction_headsigns: dict[tuple[str, str], str] = {}
+        self.stop_directions: dict[str, tuple[str, str]] = {}
 
         super().__init__(
             hass,
@@ -45,7 +47,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         if not self.stop_index:
-            self.stop_index, self.route_index, self.trip_index = await self.api.async_fetch_static_gtfs()
+            self.stop_index, self.route_index, self.trip_index, self.direction_headsigns, self.stop_directions = await self.api.async_fetch_static_gtfs()
 
         feed = await self.api.async_fetch_trip_updates()
         alerts_feed = await self.api.async_fetch_service_alerts()
