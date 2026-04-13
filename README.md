@@ -1,5 +1,7 @@
 # Adelaide Metro
 
+![Adelaide Metro logo](assets/logo.jpg)
+
 A HACS-compatible Home Assistant custom integration for Adelaide Metro realtime public transport data.
 
 ## Current features
