@@ -58,6 +58,12 @@ def _filter_relevant_alerts(coordinator):
     alerts = coordinator.data.get("alerts", [])
     stop_ids = set(coordinator.stops)
     route_filters = set(coordinator.route_filters)
+    monitored_route_ids = {
+        dep.get("route_id")
+        for departures in coordinator.data.get("departures", {}).values()
+        for dep in departures
+        if dep.get("route_id")
+    }
     relevant = []
 
     for alert in alerts:
@@ -73,6 +79,9 @@ def _filter_relevant_alerts(coordinator):
                 matches = True
                 break
             if route_filters and route_id and route_id in route_filters:
+                matches = True
+                break
+            if not route_filters and route_id and route_id in monitored_route_ids:
                 matches = True
                 break
         if matches:
