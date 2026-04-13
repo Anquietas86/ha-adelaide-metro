@@ -17,7 +17,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     for stop_id in coordinator.stops:
         entities.append(AdelaideMetroNextDepartureSensor(coordinator, stop_id))
         entities.append(AdelaideMetroUpcomingDeparturesSensor(coordinator, stop_id))
+
+    relevant_alerts = _filter_relevant_alerts(coordinator)
+    for alert in relevant_alerts:
+        entities.append(AdelaideMetroAlertEntity(coordinator, alert))
+
     async_add_entities(entities)
+
+
+def _filter_relevant_alerts(coordinator):
+    alerts = coordinator.data.get("alerts", [])
+    stop_ids = set(coordinator.stops)
+    route_filters = set(coordinator.route_filters)
+    relevant = []
+
+    for alert in alerts:
+        informed = alert.get("informed_entities", [])
+        if not informed:
+            continue
+
+        matches = False
+        for entity in informed:
+            route_id = entity.get("route_id")
+            stop_id = entity.get("stop_id")
+            if stop_id and stop_id in stop_ids:
+                matches = True
+                break
+            if route_filters and route_id and route_id in route_filters:
+                matches = True
+                break
+        if matches:
+            relevant.append(alert)
+
+    return relevant
 
 
 class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
@@ -126,4 +158,46 @@ class AdelaideMetroAlertsSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self):
         return {
             "alerts": self.coordinator.data.get("alerts", []),
+            "relevant_alert_count": len(_filter_relevant_alerts(self.coordinator)),
         }
+
+
+class AdelaideMetroAlertEntity(CoordinatorEntity, SensorEntity):
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, alert: dict) -> None:
+        super().__init__(coordinator)
+        self._alert_id = alert.get("id") or "unknown"
+        self._attr_name = alert.get("header") or f"Alert {self._alert_id}"
+        self._attr_unique_id = f"adelaide_metro_alert_{self._alert_id}"
+        self._attr_icon = "mdi:alert"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, "network")},
+            "name": "Adelaide Metro",
+            "manufacturer": "Adelaide Metro",
+            "model": "GTFS Realtime Feed",
+        }
+
+    @property
+    def native_value(self):
+        for alert in _filter_relevant_alerts(self.coordinator):
+            if alert.get("id") == self._alert_id:
+                return alert.get("header") or "Active"
+        return None
+
+    @property
+    def available(self):
+        return any(alert.get("id") == self._alert_id for alert in _filter_relevant_alerts(self.coordinator))
+
+    @property
+    def extra_state_attributes(self):
+        for alert in _filter_relevant_alerts(self.coordinator):
+            if alert.get("id") == self._alert_id:
+                return {
+                    "description": alert.get("description"),
+                    "url": alert.get("url"),
+                    "cause": alert.get("cause"),
+                    "effect": alert.get("effect"),
+                    "informed_entities": alert.get("informed_entities", []),
+                }
+        return {}
