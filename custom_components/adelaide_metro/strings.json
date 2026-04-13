@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Adelaide Metro",
+        "description": "Configure Adelaide Metro realtime stop monitoring.",
+        "data": {
+          "stops": "Stop IDs (comma separated)",
+          "route_filters": "Route filters (comma separated, optional)",
+          "max_departures": "Maximum departures to keep",
+          "refresh_interval": "Refresh interval in seconds"
+        }
+      }
+    },
+    "error": {
+      "no_stops": "Enter at least one stop ID.",
+      "invalid_max_departures": "Maximum departures must be at least 1.",
+      "invalid_refresh_interval": "Refresh interval must be at least 15 seconds."
+    },
+    "abort": {
+      "already_configured": "These stops are already configured."
+    }
+  }
+}

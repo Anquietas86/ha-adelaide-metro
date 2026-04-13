@@ -1,0 +1,15 @@
+{
+  "domain": "adelaide_metro",
+  "name": "Adelaide Metro",
+  "codeowners": ["@Anquietas86"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/Anquietas86/ha-adelaide-metro",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Anquietas86/ha-adelaide-metro/issues",
+  "requirements": [
+    "gtfs-realtime-bindings>=1.0.0",
+    "protobuf>=4.25.3"
+  ],
+  "version": "0.1.0"
+}
