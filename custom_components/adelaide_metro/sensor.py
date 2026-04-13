@@ -29,7 +29,7 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
         self._stop = coordinator.stop_index.get(stop_id)
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"stop_{stop_id}")},
-            "name": self._stop.stop_name if self._stop and self._stop.stop_name else f"Stop {stop_id}",
+            "name": self._device_name,
             "manufacturer": "Adelaide Metro",
             "model": "GTFS Realtime Stop",
         }
@@ -39,10 +39,28 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
         return self.coordinator.data["departures"].get(self._stop_id, [])
 
     @property
+    def _direction_suffix(self) -> str | None:
+        if not self._departures:
+            return None
+        dep = self._departures[0]
+        route_name = dep.get("route_short_name") or dep.get("route_id") or "service"
+        direction_id = dep.get("direction_id")
+        if direction_id is None:
+            return f"{route_name}"
+        return f"{route_name} dir {direction_id}"
+
+    @property
+    def _device_name(self) -> str:
+        base = self._stop.stop_name if self._stop and self._stop.stop_name else f"Stop {self._stop_id}"
+        suffix = self._direction_suffix
+        return f"{base} ({suffix})" if suffix else base
+
+    @property
     def extra_state_attributes(self):
         return {
             "stop_id": self._stop_id,
             "stop_name": self._stop.stop_name if self._stop else None,
+            "display_name": self._device_name,
             "stop_code": self._stop.stop_code if self._stop else None,
             "latitude": self._stop.stop_lat if self._stop else None,
             "longitude": self._stop.stop_lon if self._stop else None,
