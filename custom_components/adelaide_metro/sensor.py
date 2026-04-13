@@ -25,27 +25,6 @@ def _expose_entity_to_voice_assistants(hass: HomeAssistant, entity_id: str) -> N
             _LOGGER.debug("Could not expose %s to voice assistants: %s", entity_id, e)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    coordinator = hass.data[DOMAIN][entry.entry_id]
-    expose_to_assistants = entry.options.get(
-        CONF_EXPOSE_TO_ASSISTANTS, entry.data.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS)
-    )
-
-    entities = [AdelaideMetroAlertsSensor(coordinator)]
-    for stop_id in coordinator.stops:
-        entities.append(AdelaideMetroNextDepartureSensor(coordinator, stop_id))
-        entities.append(AdelaideMetroUpcomingDeparturesSensor(coordinator, stop_id))
-
-    relevant_alerts = _filter_relevant_alerts(coordinator)
-    for alert in relevant_alerts:
-        entities.append(AdelaideMetroAlertEntity(coordinator, alert))
-
-    async_add_entities(entities)
-
-    if expose_to_assistants:
-        await hass.async_add_executor_job(_apply_assistant_exposure, hass, DOMAIN)
-
-
 def _apply_assistant_exposure(hass: HomeAssistant, domain: str) -> None:
     registry = er.async_get(hass)
     for entity in list(registry.entities.values()):
@@ -54,7 +33,7 @@ def _apply_assistant_exposure(hass: HomeAssistant, domain: str) -> None:
         _expose_entity_to_voice_assistants(hass, entity.entity_id)
 
 
-def _filter_relevant_alerts(coordinator):
+def _filter_relevant_alerts(coordinator) -> list[dict]:
     alerts = coordinator.data.get("alerts", [])
     stop_ids = set(coordinator.stops)
     route_filters = set(coordinator.route_filters)
@@ -90,6 +69,63 @@ def _filter_relevant_alerts(coordinator):
     return relevant
 
 
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    expose_to_assistants = entry.options.get(
+        CONF_EXPOSE_TO_ASSISTANTS, entry.data.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS)
+    )
+
+    known_alert_ids: set[str] = set()
+
+    entities: list[SensorEntity] = [AdelaideMetroAlertsSensor(coordinator)]
+    for stop_id in coordinator.stops:
+        entities.append(AdelaideMetroNextDepartureSensor(coordinator, stop_id))
+        entities.append(AdelaideMetroUpcomingDeparturesSensor(coordinator, stop_id))
+
+    relevant_alerts = _filter_relevant_alerts(coordinator)
+    for alert in relevant_alerts:
+        alert_id = alert.get("id") or "unknown"
+        entities.append(AdelaideMetroAlertEntity(coordinator, alert))
+        known_alert_ids.add(alert_id)
+
+    async_add_entities(entities)
+
+    def _handle_coordinator_update() -> None:
+        nonlocal known_alert_ids
+        current_alerts = _filter_relevant_alerts(coordinator)
+        current_ids = {a.get("id") or "unknown" for a in current_alerts}
+
+        new_ids = current_ids - known_alert_ids
+        stale_ids = known_alert_ids - current_ids
+
+        if new_ids:
+            new_entities = [
+                AdelaideMetroAlertEntity(coordinator, a)
+                for a in current_alerts
+                if (a.get("id") or "unknown") in new_ids
+            ]
+            async_add_entities(new_entities)
+            if expose_to_assistants:
+                hass.async_add_executor_job(_apply_assistant_exposure, hass, DOMAIN)
+            _LOGGER.debug("Added %d new alert entities: %s", len(new_entities), new_ids)
+
+        if stale_ids:
+            registry = er.async_get(hass)
+            for alert_id in stale_ids:
+                unique_id = f"adelaide_metro_alert_{alert_id}"
+                entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+                if entity_id:
+                    registry.async_remove(entity_id)
+                    _LOGGER.debug("Removed stale alert entity: %s", entity_id)
+
+        known_alert_ids = current_ids
+
+    coordinator.async_add_listener(_handle_coordinator_update)
+
+    if expose_to_assistants:
+        await hass.async_add_executor_job(_apply_assistant_exposure, hass, DOMAIN)
+
+
 class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
 
@@ -116,7 +152,6 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
         headsign = dep.get("trip_headsign")
         if headsign:
             return f"{headsign}-bound"
-
         direction_id = dep.get("direction_id")
         if direction_id == 0:
             return "City-bound"
@@ -216,26 +251,30 @@ class AdelaideMetroAlertEntity(CoordinatorEntity, SensorEntity):
             "model": "GTFS Realtime Feed",
         }
 
-    @property
-    def native_value(self):
+    def _current_alert(self) -> dict | None:
         for alert in _filter_relevant_alerts(self.coordinator):
             if alert.get("id") == self._alert_id:
-                return alert.get("header") or "Active"
+                return alert
         return None
 
     @property
+    def native_value(self):
+        alert = self._current_alert()
+        return alert.get("header") or "Active" if alert else None
+
+    @property
     def available(self):
-        return any(alert.get("id") == self._alert_id for alert in _filter_relevant_alerts(self.coordinator))
+        return self._current_alert() is not None
 
     @property
     def extra_state_attributes(self):
-        for alert in _filter_relevant_alerts(self.coordinator):
-            if alert.get("id") == self._alert_id:
-                return {
-                    "description": alert.get("description"),
-                    "url": alert.get("url"),
-                    "cause": alert.get("cause"),
-                    "effect": alert.get("effect"),
-                    "informed_entities": alert.get("informed_entities", []),
-                }
-        return {}
+        alert = self._current_alert()
+        if not alert:
+            return {}
+        return {
+            "description": alert.get("description"),
+            "url": alert.get("url"),
+            "cause": alert.get("cause"),
+            "effect": alert.get("effect"),
+            "informed_entities": alert.get("informed_entities", []),
+        }
