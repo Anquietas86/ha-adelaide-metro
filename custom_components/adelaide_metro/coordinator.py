@@ -11,6 +11,8 @@ from .const import (
     CONF_REFRESH_INTERVAL,
     CONF_ROUTE_FILTERS,
     CONF_STOPS,
+    DEFAULT_MAX_DEPARTURES,
+    DEFAULT_REFRESH_INTERVAL,
     DOMAIN,
 )
 
@@ -27,9 +29,9 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
     def __init__(self, hass, entry):
         self.entry = entry
         self.api = AdelaideMetroApiClient(hass)
-        self.stops = entry.data[CONF_STOPS]
-        self.route_filters = set(entry.data.get(CONF_ROUTE_FILTERS, []))
-        self.max_departures = entry.data[CONF_MAX_DEPARTURES]
+        self.stops = entry.options.get(CONF_STOPS, entry.data.get(CONF_STOPS, []))
+        self.route_filters = set(entry.options.get(CONF_ROUTE_FILTERS, entry.data.get(CONF_ROUTE_FILTERS, [])))
+        self.max_departures = entry.options.get(CONF_MAX_DEPARTURES, entry.data.get(CONF_MAX_DEPARTURES, DEFAULT_MAX_DEPARTURES))
         self.stop_index = {}
         self.route_index = {}
         self.trip_index = {}
@@ -38,7 +40,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             hass,
             logger=_LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=entry.data[CONF_REFRESH_INTERVAL]),
+            update_interval=timedelta(seconds=entry.options.get(CONF_REFRESH_INTERVAL, entry.data.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL))),
         )
 
     async def _async_update_data(self):
