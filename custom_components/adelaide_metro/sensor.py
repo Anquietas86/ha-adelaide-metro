@@ -15,6 +15,7 @@ from .const import CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS, DOMA
 _LOGGER = logging.getLogger(__name__)
 
 
+@callback
 def _expose_entity_to_voice_assistants(hass: HomeAssistant, entity_id: str) -> None:
     registry = er.async_get(hass)
     if entity_id and registry.async_get(entity_id):
@@ -25,6 +26,7 @@ def _expose_entity_to_voice_assistants(hass: HomeAssistant, entity_id: str) -> N
             _LOGGER.debug("Could not expose %s to voice assistants: %s", entity_id, e)
 
 
+@callback
 def _apply_assistant_exposure(hass: HomeAssistant, domain: str) -> None:
     registry = er.async_get(hass)
     for entity in list(registry.entities.values()):
@@ -108,7 +110,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             async_add_entities(new_entities)
             _LOGGER.debug("Added %d new alert entities: %s", len(new_entities), new_ids)
             if expose_to_assistants:
-                hass.async_add_job(_apply_assistant_exposure, hass, DOMAIN)
+                _apply_assistant_exposure(hass, DOMAIN)
 
         if stale_ids:
             registry = er.async_get(hass)
@@ -125,7 +127,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     coordinator.async_add_listener(_handle_coordinator_update)
 
     if expose_to_assistants:
-        await hass.async_add_executor_job(_apply_assistant_exposure, hass, DOMAIN)
+        _apply_assistant_exposure(hass, DOMAIN)
 
 
 class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
@@ -240,8 +242,15 @@ class AdelaideMetroAlertsSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        all_alerts = self.coordinator.data.get("alerts", [])
+        # Limit stored alerts to avoid exceeding HA's 16KB attribute limit.
+        # Each alert carries a full HTML description — keep just the headers.
+        slim_alerts = [
+            {"id": a.get("id"), "header": a.get("header"), "url": a.get("url")}
+            for a in all_alerts
+        ]
         return {
-            "alerts": self.coordinator.data.get("alerts", []),
+            "alerts": slim_alerts,
             "relevant_alert_count": len(_filter_relevant_alerts(self.coordinator)),
         }
 
