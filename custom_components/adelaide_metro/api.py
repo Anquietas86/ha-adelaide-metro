@@ -9,7 +9,83 @@ from collections import defaultdict
 from google.transit import gtfs_realtime_pb2
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import SERVICE_ALERTS_URL, STATIC_GTFS_URL, TRIP_UPDATES_URL
+from .const import SERVICE_ALERTS_URL, STATIC_GTFS_URL, TRIP_UPDATES_URL, VEHICLE_POSITIONS_URL
+
+
+def _parse_tfnsw_vehicle_descriptor(vehicle_desc_msg) -> tuple[bool, int]:
+    """Parse TFNSW extension (field 1999) from serialized VehicleDescriptor bytes.
+    
+    Adelaide Metro uses a custom protobuf extension on VehicleDescriptor
+    (extension id 1999, namespace transit_realtime.tfnsw_vehicle_descriptor)
+    with fields air_conditioned (bool, default true) and
+    wheelchair_accessible (int32, 0 or 1, default 0).
+    
+    Returns (air_conditioned, wheelchair_accessible) or (False, 0) if absent.
+    """
+    raw = vehicle_desc_msg.SerializeToString()
+    pos = 0
+    while pos < len(raw):
+        tag = 0
+        shift = 0
+        while True:
+            b = raw[pos]
+            pos += 1
+            tag |= (b & 0x7F) << shift
+            shift += 7
+            if not (b & 0x80):
+                break
+        field_num = tag >> 3
+        wire_type = tag & 0x7
+        if wire_type == 2:  # length-delimited
+            length = 0
+            shift = 0
+            while True:
+                b = raw[pos]
+                pos += 1
+                length |= (b & 0x7F) << shift
+                shift += 7
+                if not (b & 0x80):
+                    break
+            if field_num == 1999:
+                sub = raw[pos : pos + length]
+                air_conditioned = True
+                wheelchair_accessible = 0
+                sp = 0
+                while sp < len(sub):
+                    stag = 0
+                    sshift = 0
+                    while True:
+                        sb = sub[sp]
+                        sp += 1
+                        stag |= (sb & 0x7F) << sshift
+                        sshift += 7
+                        if not (sb & 0x80):
+                            break
+                    sfn = stag >> 3
+                    sval = 0
+                    sshift = 0
+                    while True:
+                        sb = sub[sp]
+                        sp += 1
+                        sval |= (sb & 0x7F) << sshift
+                        sshift += 7
+                        if not (sb & 0x80):
+                            break
+                    if sfn == 1:
+                        air_conditioned = bool(sval)
+                    elif sfn == 2:
+                        wheelchair_accessible = sval
+                return air_conditioned, wheelchair_accessible
+            pos += length
+        elif wire_type == 0:  # varint
+            while pos < len(raw) and raw[pos] & 0x80:
+                pos += 1
+            pos += 1
+        elif wire_type == 1:  # 64-bit
+            pos += 8
+        elif wire_type == 5:  # 32-bit
+            pos += 4
+    return False, 0
 
 
 @dataclass
@@ -57,6 +133,49 @@ class AdelaideMetroApiClient:
         feed = gtfs_realtime_pb2.FeedMessage()
         feed.ParseFromString(data)
         return feed
+
+    async def async_fetch_vehicle_positions(self) -> list[dict]:
+        async with self._session.get(VEHICLE_POSITIONS_URL) as resp:
+            resp.raise_for_status()
+            data = await resp.read()
+
+        feed = gtfs_realtime_pb2.FeedMessage()
+        feed.ParseFromString(data)
+
+        vehicles: list[dict] = []
+        for entity in feed.entity:
+            if not entity.HasField("vehicle"):
+                continue
+            v = entity.vehicle
+            if not v.HasField("position") or not v.HasField("trip"):
+                continue
+
+            trip = v.trip
+            pos = v.position
+            vid = v.vehicle
+            air_conditioned, wheelchair_accessible = _parse_tfnsw_vehicle_descriptor(vid)
+
+            vehicles.append(
+                {
+                    "id": entity.id,
+                    "trip_id": trip.trip_id,
+                    "route_id": trip.route_id,
+                    "direction_id": trip.direction_id if trip.HasField("direction_id") else None,
+                    "latitude": pos.latitude,
+                    "longitude": pos.longitude,
+                    "bearing": pos.bearing if pos.HasField("bearing") else None,
+                    "speed": pos.speed if pos.HasField("speed") else None,
+                    "vehicle_id": vid.id if vid.HasField("id") else None,
+                    "vehicle_label": vid.label if vid.HasField("label") else None,
+                    "timestamp": v.timestamp,
+                    "air_conditioned": air_conditioned,
+                    "wheelchair_accessible": wheelchair_accessible,
+                    "current_stop_sequence": v.current_stop_sequence if v.HasField("current_stop_sequence") else None,
+                    "stop_id": v.stop_id if v.HasField("stop_id") else None,
+                    "current_status": int(v.current_status) if v.HasField("current_status") else None,
+                }
+            )
+        return vehicles
 
     async def async_fetch_service_alerts(self):
         async with self._session.get(SERVICE_ALERTS_URL) as resp:

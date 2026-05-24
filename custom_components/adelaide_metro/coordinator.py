@@ -70,6 +70,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
 
         feed = await self.api.async_fetch_trip_updates()
         alerts_feed = await self.api.async_fetch_service_alerts()
+        vehicles = await self.api.async_fetch_vehicle_positions()
         now_ts = now.timestamp()
         departures_by_stop: dict[str, list[dict]] = {stop_id: [] for stop_id in self.stops}
 
@@ -152,4 +153,5 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             "trips": self.trip_index,
             "departures": departures_by_stop,
             "alerts": alerts,
+            "vehicles": vehicles,
         }

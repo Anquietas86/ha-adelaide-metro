@@ -78,6 +78,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     )
 
     known_alert_ids: set[str] = set()
+    known_vehicle_ids: set[str] = set()
 
     entities: list[SensorEntity] = [AdelaideMetroAlertsSensor(coordinator)]
     for stop_id in coordinator.stops:
@@ -90,11 +91,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         entities.append(AdelaideMetroAlertEntity(coordinator, alert))
         known_alert_ids.add(alert_id)
 
+    active_vehicles = _filter_relevant_vehicles(coordinator)
+    for vehicle in active_vehicles:
+        vehicle_id = vehicle["id"]
+        entities.append(AdelaideMetroVehicleSensor(coordinator, vehicle))
+        known_vehicle_ids.add(vehicle_id)
+
     async_add_entities(entities)
 
     @callback
     def _handle_coordinator_update() -> None:
-        nonlocal known_alert_ids
+        nonlocal known_alert_ids, known_vehicle_ids
         current_alerts = _filter_relevant_alerts(coordinator)
         current_ids = {a.get("id") or "unknown" for a in current_alerts}
 
@@ -124,10 +131,64 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         known_alert_ids.clear()
         known_alert_ids.update(current_ids)
 
+        # Manage vehicle entities — appear and disappear as vehicles come and go
+        current_vehicles = _filter_relevant_vehicles(coordinator)
+        current_vehicle_ids = {v["id"] for v in current_vehicles}
+
+        new_vehicle_ids = current_vehicle_ids - known_vehicle_ids
+        stale_vehicle_ids = known_vehicle_ids - current_vehicle_ids
+
+        if new_vehicle_ids:
+            new_vehicle_entities = [
+                AdelaideMetroVehicleSensor(coordinator, v)
+                for v in current_vehicles
+                if v["id"] in new_vehicle_ids
+            ]
+            async_add_entities(new_vehicle_entities)
+            _LOGGER.debug("Added %d new vehicle entities: %s", len(new_vehicle_entities), new_vehicle_ids)
+            if expose_to_assistants:
+                _apply_assistant_exposure(hass, DOMAIN)
+
+        if stale_vehicle_ids:
+            registry = er.async_get(hass)
+            for vehicle_id in stale_vehicle_ids:
+                unique_id = f"adelaide_metro_vehicle_{vehicle_id}"
+                entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+                if entity_id:
+                    registry.async_remove(entity_id)
+                    _LOGGER.debug("Removed stale vehicle entity: %s (%s)", entity_id, vehicle_id)
+
+        known_vehicle_ids.clear()
+        known_vehicle_ids.update(current_vehicle_ids)
+
     coordinator.async_add_listener(_handle_coordinator_update)
 
     if expose_to_assistants:
         _apply_assistant_exposure(hass, DOMAIN)
+
+
+def _filter_relevant_vehicles(coordinator) -> list[dict]:
+    """Filter vehicles to those serving the user's configured routes."""
+    vehicles = coordinator.data.get("vehicles", [])
+    route_filters = set(coordinator.route_filters)
+
+    # Determine which routes are relevant:
+    # 1. Routes explicitly configured as route filters
+    # 2. Routes seen in departure data for configured stops
+    monitored_route_ids = {
+        dep.get("route_id")
+        for departures in coordinator.data.get("departures", {}).values()
+        for dep in departures
+        if dep.get("route_id")
+    }
+
+    relevant = []
+    for vehicle in vehicles:
+        route_id = vehicle.get("route_id")
+        if route_id and (route_id in route_filters or route_id in monitored_route_ids):
+            relevant.append(vehicle)
+
+    return relevant
 
 
 class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
@@ -297,4 +358,78 @@ class AdelaideMetroAlertEntity(CoordinatorEntity, SensorEntity):
             "cause": alert.get("cause"),
             "effect": alert.get("effect"),
             "informed_entities": alert.get("informed_entities", []),
+        }
+
+
+class AdelaideMetroVehicleSensor(CoordinatorEntity, SensorEntity):
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, vehicle: dict) -> None:
+        super().__init__(coordinator)
+        self._vehicle_id = vehicle["id"]
+        route_id = vehicle.get("route_id") or "unknown"
+        vehicle_label = vehicle.get("vehicle_label") or vehicle.get("vehicle_id") or "?"
+
+        route = coordinator.route_index.get(route_id)
+        route_label = route.route_short_name if route and route.route_short_name else route_id
+
+        self._attr_name = f"{route_label} — {vehicle_label}"
+        self._attr_unique_id = f"adelaide_metro_vehicle_{self._vehicle_id}"
+        self._attr_icon = "mdi:bus"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, "vehicle_tracker")},
+            "name": "Vehicle Tracker",
+            "manufacturer": "Adelaide Metro",
+            "model": "GTFS Realtime Feed",
+        }
+
+    @property
+    def native_value(self):
+        return self._current_vehicle().get("vehicle_label") or self._current_vehicle().get("vehicle_id") or "Active"
+
+    @property
+    def available(self):
+        return self._current_vehicle() is not None
+
+    def _current_vehicle(self) -> dict:
+        for vehicle in _filter_relevant_vehicles(self.coordinator):
+            if vehicle["id"] == self._vehicle_id:
+                return vehicle
+        return {}
+
+    @property
+    def extra_state_attributes(self):
+        vehicle = self._current_vehicle()
+        if not vehicle:
+            return {}
+        route_id = vehicle.get("route_id")
+        route = self.coordinator.route_index.get(route_id)
+        trip = self.coordinator.trip_index.get(vehicle.get("trip_id") or "")
+
+        speed_ms = vehicle.get("speed")
+        speed_kmh = None
+        if speed_ms is not None:
+            speed_ms = round(speed_ms, 1)
+            speed_kmh = round(speed_ms * 3.6, 1)  # m/s → km/h
+
+        current_status_map = {
+            0: "INCOMING_AT",
+            1: "STOPPED_AT",
+            2: "IN_TRANSIT_TO",
+        }
+
+        return {
+            "route_id": route_id,
+            "route_name": route.route_long_name if route and route.route_long_name else (route.route_short_name if route else None),
+            "trip_headsign": trip.trip_headsign if trip else None,
+            "direction_id": vehicle.get("direction_id"),
+            "latitude": vehicle.get("latitude"),
+            "longitude": vehicle.get("longitude"),
+            "bearing": vehicle.get("bearing"),
+            "speed_ms": round(vehicle["speed"], 1) if vehicle.get("speed") is not None else None,
+            "speed_kmh": speed_kmh,
+            "current_status": current_status_map.get(vehicle.get("current_status"), None),
+            "air_conditioned": vehicle.get("air_conditioned"),
+            "wheelchair_accessible": vehicle.get("wheelchair_accessible"),
+            "last_updated": vehicle.get("timestamp"),
         }
