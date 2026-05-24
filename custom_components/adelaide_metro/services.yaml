@@ -1,0 +1,6 @@
+refresh:
+  name: Refresh data
+  description: Force an immediate refresh of all Adelaide Metro realtime data (departures, alerts, vehicle positions).
+  target:
+    entity:
+      integration: adelaide_metro

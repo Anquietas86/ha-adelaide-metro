@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import (
     CONF_EXPOSE_TO_ASSISTANTS,
@@ -39,6 +39,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Register the refresh service
+    async def _handle_refresh(call: ServiceCall) -> None:
+        await coordinator.async_request_refresh()
+
+    if not hass.services.has_service(DOMAIN, "refresh"):
+        hass.services.async_register(DOMAIN, "refresh", _handle_refresh)
+
     return True
 
 

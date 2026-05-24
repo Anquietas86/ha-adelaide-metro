@@ -7,11 +7,13 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .api import AdelaideMetroApiClient
 from .const import (
+    CONF_ALERT_GRACE_MINUTES,
     CONF_MAX_DEPARTURES,
     CONF_REFRESH_INTERVAL,
     CONF_ROUTE_FILTERS,
     CONF_STATIC_GTFS_REFRESH_HOURS,
     CONF_STOPS,
+    DEFAULT_ALERT_GRACE_MINUTES,
     DEFAULT_MAX_DEPARTURES,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STATIC_GTFS_REFRESH_HOURS,
@@ -44,6 +46,10 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         self.direction_headsigns: dict[tuple[str, str], str] = {}
         self.stop_directions: dict[str, tuple[str, str]] = {}
         self._last_static_gtfs_refresh: datetime | None = None
+        self.alert_grace_minutes = entry.options.get(
+            CONF_ALERT_GRACE_MINUTES,
+            entry.data.get(CONF_ALERT_GRACE_MINUTES, DEFAULT_ALERT_GRACE_MINUTES),
+        )
 
         super().__init__(
             hass,

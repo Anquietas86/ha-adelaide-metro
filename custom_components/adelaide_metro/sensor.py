@@ -78,6 +78,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     )
 
     known_alert_ids: set[str] = set()
+    alert_seen_time: dict[str, datetime] = {}
     known_vehicle_ids: set[str] = set()
 
     entities: list[SensorEntity] = [AdelaideMetroAlertsSensor(coordinator)]
@@ -90,6 +91,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         alert_id = alert.get("id") or "unknown"
         entities.append(AdelaideMetroAlertEntity(coordinator, alert))
         known_alert_ids.add(alert_id)
+        alert_seen_time[alert_id] = datetime.now(UTC)
 
     active_vehicles = _filter_relevant_vehicles(coordinator)
     for vehicle in active_vehicles:
@@ -101,9 +103,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     @callback
     def _handle_coordinator_update() -> None:
-        nonlocal known_alert_ids, known_vehicle_ids
+        nonlocal known_alert_ids, known_vehicle_ids, alert_seen_time
+        now = datetime.now(UTC)
+        grace_seconds = coordinator.alert_grace_minutes * 60
+
         current_alerts = _filter_relevant_alerts(coordinator)
         current_ids = {a.get("id") or "unknown" for a in current_alerts}
+
+        # Update last-seen time for alerts still active
+        for alert_id in current_ids:
+            alert_seen_time[alert_id] = now
 
         new_ids = current_ids - known_alert_ids
         stale_ids = known_alert_ids - current_ids
@@ -115,21 +124,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 if (a.get("id") or "unknown") in new_ids
             ]
             async_add_entities(new_entities)
+            for aid in new_ids:
+                alert_seen_time[aid] = now
             _LOGGER.debug("Added %d new alert entities: %s", len(new_entities), new_ids)
             if expose_to_assistants:
                 _apply_assistant_exposure(hass, DOMAIN)
 
-        if stale_ids:
+        # Remove stale alerts only after grace period has expired
+        expired_ids = {
+            aid
+            for aid in stale_ids
+            if (now - alert_seen_time.get(aid, now)).total_seconds() >= grace_seconds
+        }
+        if expired_ids:
             registry = er.async_get(hass)
-            for alert_id in stale_ids:
+            for alert_id in expired_ids:
                 unique_id = f"adelaide_metro_alert_{alert_id}"
                 entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
                 if entity_id:
                     registry.async_remove(entity_id)
                     _LOGGER.debug("Removed stale alert entity: %s (%s)", entity_id, alert_id)
+                alert_seen_time.pop(alert_id, None)
 
+        # Keep alerts that are within grace period in the set so they don't get re-created
         known_alert_ids.clear()
         known_alert_ids.update(current_ids)
+        known_alert_ids.update(stale_ids - expired_ids)
 
         # Manage vehicle entities — appear and disappear as vehicles come and go
         current_vehicles = _filter_relevant_vehicles(coordinator)
@@ -268,6 +288,16 @@ class AdelaideMetroNextDepartureSensor(AdelaideMetroBaseSensor):
         next_time = self._departures[0]["time"]
         delta = int((next_time - datetime.now(UTC).timestamp()) // 60)
         return max(delta, 0)
+
+    @property
+    def extra_state_attributes(self):
+        attrs = super().extra_state_attributes
+        if self._departures:
+            next_time = self._departures[0]["time"]
+            attrs["arriving_at"] = datetime.fromtimestamp(
+                next_time, tz=UTC
+            ).strftime("%H:%M")
+        return attrs
 
 
 class AdelaideMetroUpcomingDeparturesSensor(AdelaideMetroBaseSensor):
