@@ -17,17 +17,17 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
-    name: Lint (ruff)
+    name: Lint
     steps:
       - uses: actions/checkout@v4
-      - name: Install ruff
-        run: pip install ruff
       - name: Run ruff
-        run: ruff check --select E,F,I,N,W .
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: check .
 
-  hacs:
+  validate:
     runs-on: ubuntu-latest
-    name: HACS validation
+    name: HACS
     steps:
       - uses: actions/checkout@v4
       - uses: hacs/action@main

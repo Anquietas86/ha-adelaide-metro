@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from io import BytesIO
 import csv
 import zipfile
 from collections import defaultdict
+from dataclasses import dataclass
+from io import BytesIO
 
 from google.transit import gtfs_realtime_pb2
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import SERVICE_ALERTS_URL, STATIC_GTFS_URL, TRIP_UPDATES_URL, VEHICLE_POSITIONS_URL
+from .const import (
+    SERVICE_ALERTS_URL,
+    STATIC_GTFS_URL,
+    TRIP_UPDATES_URL,
+    VEHICLE_POSITIONS_URL,
+)
 
 
 def _parse_tfnsw_vehicle_descriptor(vehicle_desc_msg) -> tuple[bool, int]:
