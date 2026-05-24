@@ -386,9 +386,20 @@ class AdelaideMetroVehicleSensor(CoordinatorEntity, SensorEntity):
         vehicle_label = vehicle.get("vehicle_label") or vehicle.get("vehicle_id") or "?"
 
         route = coordinator.route_index.get(route_id)
-        route_label = route.route_short_name if route and route.route_short_name else route_id
+        route_label = (
+            route.route_long_name if route and route.route_long_name
+            else route.route_short_name if route and route.route_short_name
+            else route_id
+        )
+        # Extract meaningful prefix: "Seaford to City — 3020" is too verbose.
+        # Use short label from long name where possible: "Seaford line 3020"
+        if " to " in (route_label or ""):
+            parts = route_label.split(" to ", 1)
+            prefix = f"{parts[0]} line"
+        else:
+            prefix = route_label
 
-        self._attr_name = f"{route_label} — {vehicle_label}"
+        self._attr_name = f"{prefix} {vehicle_label}"
         self._attr_unique_id = f"adelaide_metro_vehicle_{self._vehicle_id}"
         self._attr_icon = "mdi:bus"
         self._attr_device_info = coordinator.resolve_route_device(route_id)

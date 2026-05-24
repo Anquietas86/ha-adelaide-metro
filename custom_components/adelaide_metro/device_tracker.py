@@ -79,10 +79,18 @@ class AdelaideMetroVehicleTracker(CoordinatorEntity, TrackerEntity):
 
         route = coordinator.route_index.get(route_id)
         route_label = (
-            route.route_short_name if route and route.route_short_name else route_id
+            route.route_long_name if route and route.route_long_name
+            else route.route_short_name if route and route.route_short_name
+            else route_id
         )
+        # Extract readable prefix: "Seaford to City" → "Seaford line"
+        if " to " in (route_label or ""):
+            parts = route_label.split(" to ", 1)
+            prefix = f"{parts[0]} line"
+        else:
+            prefix = route_label
 
-        self._attr_name = f"{route_label} — {vehicle_label}"
+        self._attr_name = f"{prefix} {vehicle_label}"
         self._attr_unique_id = f"adelaide_metro_tracker_{self._vehicle_id}"
         self._attr_icon = "mdi:bus"
         self._attr_device_info = coordinator.resolve_route_device(route_id)
