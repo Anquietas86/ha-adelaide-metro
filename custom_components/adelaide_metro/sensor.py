@@ -253,7 +253,7 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
 class AdelaideMetroNextDepartureSensor(AdelaideMetroBaseSensor):
     def __init__(self, coordinator, stop_id: str) -> None:
         super().__init__(coordinator, stop_id)
-        self._attr_name = "Next departure"
+        self._attr_name = f"{self._device_name} next departure"
         self._attr_unique_id = f"adelaide_metro_{stop_id}_next_departure"
         self._attr_icon = "mdi:bus-clock"
         self._attr_native_unit_of_measurement = "min"
@@ -280,7 +280,7 @@ class AdelaideMetroNextDepartureSensor(AdelaideMetroBaseSensor):
 class AdelaideMetroUpcomingDeparturesSensor(AdelaideMetroBaseSensor):
     def __init__(self, coordinator, stop_id: str) -> None:
         super().__init__(coordinator, stop_id)
-        self._attr_name = "Upcoming departures"
+        self._attr_name = f"{self._device_name} upcoming"
         self._attr_unique_id = f"adelaide_metro_{stop_id}_upcoming_departures"
         self._attr_icon = "mdi:format-list-bulleted"
 
