@@ -8,6 +8,7 @@ from homeassistant.components.device_tracker import SourceType
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -50,8 +51,13 @@ async def async_setup_entry(
             _LOGGER.debug("Added %d new vehicle trackers: %s", len(new_entities), new_ids)
 
         if stale_ids:
+            registry = er.async_get(hass)
             for vehicle_id in stale_ids:
-                _LOGGER.debug("Vehicle tracker left feed: %s", vehicle_id)
+                unique_id = f"adelaide_metro_tracker_{vehicle_id}"
+                entity_id = registry.async_get_entity_id("device_tracker", DOMAIN, unique_id)
+                if entity_id:
+                    registry.async_remove(entity_id)
+                    _LOGGER.debug("Removed stale tracker: %s (%s)", entity_id, vehicle_id)
 
         known_vehicle_ids.clear()
         known_vehicle_ids.update(current_ids)

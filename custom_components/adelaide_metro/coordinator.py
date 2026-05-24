@@ -90,13 +90,19 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
     def resolve_route_device(self, route_id: str | None) -> dict:
-        """Build device_info dict grouped under this route."""
-        fallback = route_id or "unknown"
-        route = self.route_index.get(fallback)
+        """Build device_info dict grouped under this route, or a safe fallback."""
+        if not route_id:
+            return {
+                "identifiers": {(DOMAIN, "network")},
+                "name": "Service Alerts",
+                "manufacturer": "Adelaide Metro",
+                "model": "GTFS Realtime Feed",
+            }
+        route = self.route_index.get(route_id)
         route_label = (
             route.route_short_name if route and route.route_short_name
             else route.route_long_name if route and route.route_long_name
-            else fallback
+            else route_id
         )
         return {
             "identifiers": {(DOMAIN, f"route_{route_id}")},
