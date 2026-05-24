@@ -20,16 +20,16 @@ jobs:
     name: Lint (ruff)
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v3
-        with:
-          args: check --select E,F,I,N,W
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run ruff
+        run: ruff check --select E,F,I,N,W .
 
-  validate:
+  hacs:
     runs-on: ubuntu-latest
     name: HACS validation
     steps:
       - uses: actions/checkout@v4
-      - name: HACS Action
-        uses: hacs/action@main
+      - uses: hacs/action@main
         with:
           category: integration
