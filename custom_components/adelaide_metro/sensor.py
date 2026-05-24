@@ -194,7 +194,8 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._stop_id = stop_id
         self._stop = coordinator.stop_index.get(stop_id)
-        self._attr_device_info = {
+        route_id = coordinator.stop_route_id(stop_id)
+        self._attr_device_info = coordinator.resolve_route_device(route_id) if route_id else {
             "identifiers": {(DOMAIN, f"stop_{stop_id}")},
             "name": self._device_name,
             "manufacturer": "Adelaide Metro",
@@ -382,12 +383,7 @@ class AdelaideMetroVehicleSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = f"{route_label} — {vehicle_label}"
         self._attr_unique_id = f"adelaide_metro_vehicle_{self._vehicle_id}"
         self._attr_icon = "mdi:bus"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, "vehicle_tracker")},
-            "name": "Vehicle Tracker",
-            "manufacturer": "Adelaide Metro",
-            "model": "GTFS Realtime Feed",
-        }
+        self._attr_device_info = coordinator.resolve_route_device(route_id)
 
     @property
     def native_value(self):

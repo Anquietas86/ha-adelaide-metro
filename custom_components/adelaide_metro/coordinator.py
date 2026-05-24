@@ -71,6 +71,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         self.direction_headsigns: dict[tuple[str, str], str] = {}
         self.stop_directions: dict[str, tuple[str, str]] = {}
         self.route_stops: dict[str, set[str]] = {}
+        self.stop_to_route: dict[str, str] = {}
         self._last_static_gtfs_refresh: datetime | None = None
         self.alert_grace_minutes = entry.options.get(
             CONF_ALERT_GRACE_MINUTES,
@@ -87,6 +88,26 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             name=DOMAIN,
             update_interval=timedelta(seconds=refresh_secs),
         )
+
+    def resolve_route_device(self, route_id: str | None) -> dict:
+        """Build device_info dict grouped under this route."""
+        fallback = route_id or "unknown"
+        route = self.route_index.get(fallback)
+        route_label = (
+            route.route_short_name if route and route.route_short_name
+            else route.route_long_name if route and route.route_long_name
+            else fallback
+        )
+        return {
+            "identifiers": {(DOMAIN, f"route_{route_id}")},
+            "name": route_label,
+            "manufacturer": "Adelaide Metro",
+            "model": "GTFS Realtime Route",
+        }
+
+    def stop_route_id(self, stop_id: str) -> str | None:
+        """Return the route ID a stop belongs to, for device grouping."""
+        return self.stop_to_route.get(stop_id)
 
     def relevant_vehicles(self) -> list[dict]:
         """Filter vehicles to those on the user's configured routes."""
@@ -139,6 +160,14 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
                     len(self.routes),
                     self.routes,
                 )
+
+            # Build stop→route mapping for device grouping
+            self.stop_to_route.clear()
+            for route_id, stop_ids in self.route_stops.items():
+                for stop_id in stop_ids:
+                    # Prefer user-configured routes; first-assigned wins
+                    if stop_id not in self.stop_to_route:
+                        self.stop_to_route[stop_id] = route_id
 
             _LOGGER.debug("Refreshed static GTFS data")
 

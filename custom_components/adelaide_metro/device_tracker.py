@@ -79,6 +79,7 @@ class AdelaideMetroVehicleTracker(CoordinatorEntity, TrackerEntity):
         self._attr_name = f"{route_label} — {vehicle_label}"
         self._attr_unique_id = f"adelaide_metro_tracker_{self._vehicle_id}"
         self._attr_icon = "mdi:bus"
+        self._attr_device_info = coordinator.resolve_route_device(route_id)
 
         self._attr_latitude = vehicle.get("latitude")
         self._attr_longitude = vehicle.get("longitude")
