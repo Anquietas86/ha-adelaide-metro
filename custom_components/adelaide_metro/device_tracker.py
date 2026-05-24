@@ -117,6 +117,11 @@ class AdelaideMetroVehicleTracker(CoordinatorEntity, TrackerEntity):
             speed_kmh = round(speed_ms * 3.6, 1)
 
         current_status_map = {0: "INCOMING_AT", 1: "STOPPED_AT", 2: "IN_TRANSIT_TO"}
+        raw_status = vehicle.get("current_status")
+        if raw_status is not None:
+            status_label = current_status_map.get(raw_status)
+        else:
+            status_label = None
 
         return {
             "route_id": route_id,
@@ -129,7 +134,7 @@ class AdelaideMetroVehicleTracker(CoordinatorEntity, TrackerEntity):
             "bearing": vehicle.get("bearing"),
             "speed_ms": speed_ms,
             "speed_kmh": speed_kmh,
-            "current_status": current_status_map.get(vehicle.get("current_status")) if vehicle.get("current_status") is not None else None,
+            "current_status": status_label,
             "air_conditioned": vehicle.get("air_conditioned"),
             "wheelchair_accessible": vehicle.get("wheelchair_accessible"),
         }

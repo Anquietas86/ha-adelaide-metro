@@ -1,8 +1,9 @@
 DOMAIN = "adelaide_metro"
 PLATFORMS = ["sensor", "device_tracker"]
 
+CONF_ROUTES = "routes"
 CONF_STOPS = "stops"
-CONF_ROUTE_FILTERS = "route_filters"
+CONF_ROUTE_FILTERS = "route_filters"  # kept for backward compat; aliased to CONF_ROUTES
 CONF_MAX_DEPARTURES = "max_departures"
 CONF_REFRESH_INTERVAL = "refresh_interval"
 CONF_EXPOSE_TO_ASSISTANTS = "expose_to_assistants"

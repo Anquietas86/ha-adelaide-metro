@@ -9,6 +9,10 @@ A HACS-compatible Home Assistant custom integration for Adelaide Metro realtime 
 
 ## Features
 
+### Route-based configuration
+- Configure by **route ID** (e.g. `SEAFRD`, `GLNELG`) — the integration discovers all stops automatically
+- Optionally filter to specific stop IDs if you only want a subset
+
 ### Realtime departures
 - Stop-based realtime departure monitoring using Adelaide Metro GTFS Realtime Trip Updates
 - Per-stop sensors:
@@ -18,27 +22,31 @@ A HACS-compatible Home Assistant custom integration for Adelaide Metro realtime 
   - Example: `Seaford Meadows Railway Station (City-bound)`
   - Example: `Seaford Meadows Railway Station (Seaford-bound)`
 
+### Vehicle tracking
+- Realtime vehicle positions via GTFS-RT Vehicle Positions feed
+- **Device trackers** — vehicles appear automatically on every Home Assistant map
+- Per-vehicle sensor entities with detailed attributes (speed, bearing, wheelchair, aircon)
+- Vehicle entities appear and disappear automatically as vehicles start and end trips
+- Filtered to vehicles on your configured routes
+
 ### Static GTFS enrichment
-- Pulls the latest Adelaide Metro static GTFS bundle on startup
+- Pulls the latest Adelaide Metro static GTFS bundle on startup (and periodically thereafter)
 - Enriches entities with stop names, stop codes, coordinates, route names and trip headsigns from:
   - `stops.txt`
   - `routes.txt`
   - `trips.txt`
+  - `stop_times.txt`
 
 ### Service alerts
 - Polls Adelaide Metro GTFS Realtime Service Alerts
 - Provides:
   - a **Service Alerts summary sensor** showing total active alert count
   - **separate alert entities** for alerts relevant to configured stops/routes only
-- Alert entities are exposed to Home Assistant Assist by default, since Assist does not reliably read attributes
-- Relevant alert matching:
-  - matches configured stop IDs
-  - matches explicit route filters if set
-  - falls back to routes actively seen in departure data for configured stops
+- Alert entities are exposed to Home Assistant Assist by default
+- Configurable grace period before cleared alerts are removed (default 30 min)
 
-### Assistant exposure
-- New entities are automatically exposed to Assist and Google Assistant by default
-- Can be toggled in the options flow
+### Refresh service
+- `adelaide_metro.refresh` — force-refresh all data via automations or scripts
 
 ## Installation
 
@@ -59,47 +67,52 @@ During setup you will be asked for:
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| Stop IDs | Comma separated list of stop IDs to monitor | required |
-| Route filters | Comma separated route IDs for alert filtering (optional) | none |
+| Route IDs | Comma separated route IDs to monitor (e.g. `SEAFRD,GLNELG`) | required |
+| Stop IDs | Comma separated stop IDs to filter (optional — leave blank for all stops on route) | none |
 | Maximum departures | Max upcoming services to track per stop | 5 |
 | Refresh interval | Seconds between realtime data refreshes | 60 |
 | Expose to assistants | Auto-expose entities to Assist and Google Assistant | on |
+| Static GTFS refresh | Hours between static data refreshes | 24 |
+| Alert grace period | Minutes before cleared alerts are removed | 30 |
 
 All settings can be edited after setup via **Settings → Devices & Services → Adelaide Metro Realtime → Configure**.
 
-## Finding stop IDs
-
-Stop IDs are numeric identifiers from the Adelaide Metro static GTFS feed.
-
-Some useful examples:
-
-| Stop | Stop ID | Notes |
-|------|---------|-------|
-| Seaford Meadows Railway Station (City-bound) | 101588 | |
-| Seaford Meadows Railway Station (Seaford-bound) | 101587 | |
-
-For stations with multiple platforms/directions, add the individual stop IDs per platform — **not** the parent station ID.
-
-To find stop IDs:
-- Download the latest static GTFS from `https://gtfs.adelaidemetro.com.au/v1/static/latest/google_transit.zip`
-- Open `stops.txt` and search for your station
-
 ## Finding route IDs
 
-Route IDs appear in the trip updates realtime feed. Some examples:
+Route IDs are short codes from the Adelaide Metro static GTFS feed. Some examples:
 
 | Route | Route ID |
 |-------|----------|
 | Seaford line | SEAFRD |
+| Flinders line | FLNDRS |
+| Belair line | BELAIR |
+| Gawler line | GAWL |
+| Outer Harbor line | OUTHA |
+| Grange line | GRNG |
 | Glenelg tram | GLNELG |
+| O-Bahn (city) | OBAHN |
 
-Adding route filters improves service alert matching — without them, alerts are matched against routes seen in departure data for your configured stops.
+To find route IDs for other services, download the latest static GTFS from `https://gtfs.adelaidemetro.com.au/v1/static/latest/google_transit.zip` and check `routes.txt`.
+
+## Finding stop IDs (optional)
+
+Stop IDs are numeric identifiers. You only need these if you want to limit which stops are tracked — otherwise the integration auto-discovers all stops on your selected routes.
+
+To find specific stop IDs:
+- Download the latest static GTFS from `https://gtfs.adelaidemetro.com.au/v1/static/latest/google_transit.zip`
+- Open `stops.txt` and search for your station
+
+For stations with multiple platforms/directions, add the individual stop IDs per platform.
 
 ## Entity types
 
 ### Per configured stop
 - `Next departure` — minutes until next service
 - `Upcoming departures` — count of next services
+
+### Per vehicle
+- `device_tracker.*` — GPS position on all maps (auto-discovered)
+- Vehicle sensor — detailed attributes (speed, bearing, accessibility)
 
 ### Per integration (Service Alerts device)
 - `Service alerts` — total active alert count in the network feed
@@ -121,26 +134,12 @@ Adelaide Metro uses a custom protobuf extension on `VehicleDescriptor` (extensio
 - `air_conditioned` (default true)
 - `wheelchair_accessible` (int32, 0 or 1)
 
-These are not yet surfaced as entity attributes but are planned.
-
-## Known limitations
-- Stop IDs must be entered manually — a searchable stop picker is planned
-- Static GTFS is only fetched once per HA restart
-- Vehicle positions are not yet exposed as entities
-- Adelaide Metro custom vehicle extension (wheelchair, aircon) not yet parsed
-
-## Planned improvements
-- Searchable stop picker in config flow
-- Vehicle positions as entities or map data
-- Parse and expose wheelchair accessibility and air conditioning from custom proto extension
-- Improved alert lifecycle (auto-cleanup of cleared alerts)
-- Periodic static GTFS refresh without restart
-
-## Current status
-v0.1.0 — functional for stop departures and relevant service alerts. Early-stage but usable.
+These are exposed as entity attributes on vehicle sensors and device trackers.
 
 ## Contributing
+
 Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) if present.
 
 ## License
+
 MIT

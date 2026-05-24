@@ -8,6 +8,7 @@ from .const import (
     CONF_MAX_DEPARTURES,
     CONF_REFRESH_INTERVAL,
     CONF_ROUTE_FILTERS,
+    CONF_ROUTES,
     CONF_STATIC_GTFS_REFRESH_HOURS,
     CONF_STOPS,
     DEFAULT_EXPOSE_TO_ASSISTANTS,
@@ -22,15 +23,19 @@ from .coordinator import AdelaideMetroDataUpdateCoordinator
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not entry.options:
+        # First-time setup — migrate old route_filters to routes if needed
+        routes = entry.data.get(CONF_ROUTES) or entry.data.get(CONF_ROUTE_FILTERS, [])
+        stops = entry.data.get(CONF_STOPS, [])
+        gtfs_hrs = entry.data.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS)
         hass.config_entries.async_update_entry(
             entry,
             options={
-                CONF_STOPS: entry.data.get(CONF_STOPS, []),
-                CONF_ROUTE_FILTERS: entry.data.get(CONF_ROUTE_FILTERS, []),
+                CONF_ROUTES: routes,
+                CONF_STOPS: stops,
                 CONF_MAX_DEPARTURES: entry.data.get(CONF_MAX_DEPARTURES, DEFAULT_MAX_DEPARTURES),
                 CONF_REFRESH_INTERVAL: entry.data.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL),
                 CONF_EXPOSE_TO_ASSISTANTS: entry.data.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS),
-                CONF_STATIC_GTFS_REFRESH_HOURS: entry.data.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS),
+                CONF_STATIC_GTFS_REFRESH_HOURS: gtfs_hrs,
             },
         )
 

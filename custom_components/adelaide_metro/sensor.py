@@ -38,7 +38,7 @@ def _apply_assistant_exposure(hass: HomeAssistant, domain: str) -> None:
 def _filter_relevant_alerts(coordinator) -> list[dict]:
     alerts = coordinator.data.get("alerts", [])
     stop_ids = set(coordinator.stops)
-    route_filters = set(coordinator.route_filters)
+    routes = set(coordinator.routes)
     monitored_route_ids = {
         dep.get("route_id")
         for departures in coordinator.data.get("departures", {}).values()
@@ -59,10 +59,10 @@ def _filter_relevant_alerts(coordinator) -> list[dict]:
             if stop_id and stop_id in stop_ids:
                 matches = True
                 break
-            if route_filters and route_id and route_id in route_filters:
+            if routes and route_id and route_id in routes:
                 matches = True
                 break
-            if not route_filters and route_id and route_id in monitored_route_ids:
+            if route_id and route_id in monitored_route_ids:
                 matches = True
                 break
         if matches:
@@ -424,9 +424,13 @@ class AdelaideMetroVehicleSensor(CoordinatorEntity, SensorEntity):
             2: "IN_TRANSIT_TO",
         }
 
+        route_name = None
+        if route:
+            route_name = route.route_long_name or route.route_short_name
+
         return {
             "route_id": route_id,
-            "route_name": route.route_long_name if route and route.route_long_name else (route.route_short_name if route else None),
+            "route_name": route_name,
             "trip_headsign": trip.trip_headsign if trip else None,
             "direction_id": vehicle.get("direction_id"),
             "latitude": vehicle.get("latitude"),

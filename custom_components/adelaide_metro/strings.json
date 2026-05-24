@@ -3,10 +3,10 @@
     "step": {
       "user": {
         "title": "Adelaide Metro",
-        "description": "Configure Adelaide Metro realtime stop monitoring.",
+        "description": "Enter the route IDs you want to monitor (e.g. SEAFRD,GLNELG).\n\nStop IDs are optional — leave blank to track all stops on selected routes, or enter specific stop IDs to filter further.",
         "data": {
-          "stops": "Stop IDs (comma separated)",
-          "route_filters": "Route filters (comma separated, optional)",
+          "routes": "Route IDs (comma separated)",
+          "stops": "Stop IDs (comma separated, optional)",
           "max_departures": "Maximum departures to keep",
           "refresh_interval": "Refresh interval in seconds",
           "expose_to_assistants": "Expose to assistants",
@@ -15,22 +15,22 @@
       }
     },
     "error": {
-      "no_stops": "Enter at least one stop ID.",
+      "no_routes": "Enter at least one route ID (e.g. SEAFRD).",
       "invalid_max_departures": "Maximum departures must be at least 1.",
       "invalid_refresh_interval": "Refresh interval must be at least 15 seconds."
     },
     "abort": {
-      "already_configured": "These stops are already configured."
+      "already_configured": "These routes are already configured."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Adelaide Metro options",
-        "description": "Edit stops, route filters, update behavior, and assistant exposure.",
+        "description": "Edit routes, stops, update behavior, and assistant exposure.\n\nRoutes are required. Leave stops blank to auto-discover all stops on selected routes.",
         "data": {
-          "stops": "Stop IDs (comma separated)",
-          "route_filters": "Route filters (comma separated, optional)",
+          "routes": "Route IDs (comma separated)",
+          "stops": "Stop IDs (comma separated, optional)",
           "max_departures": "Maximum departures to keep",
           "refresh_interval": "Refresh interval in seconds",
           "expose_to_assistants": "Expose to assistants",
@@ -39,7 +39,7 @@
       }
     },
     "error": {
-      "no_stops": "Enter at least one stop ID.",
+      "no_routes": "Enter at least one route ID (e.g. SEAFRD).",
       "invalid_max_departures": "Maximum departures must be at least 1.",
       "invalid_refresh_interval": "Refresh interval must be at least 15 seconds."
     }

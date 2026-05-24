@@ -19,12 +19,12 @@ from .const import (
 
 def _parse_tfnsw_vehicle_descriptor(vehicle_desc_msg) -> tuple[bool, int]:
     """Parse TFNSW extension (field 1999) from serialized VehicleDescriptor bytes.
-    
+
     Adelaide Metro uses a custom protobuf extension on VehicleDescriptor
     (extension id 1999, namespace transit_realtime.tfnsw_vehicle_descriptor)
     with fields air_conditioned (bool, default true) and
     wheelchair_accessible (int32, 0 or 1, default 0).
-    
+
     Returns (air_conditioned, wheelchair_accessible) or (False, 0) if absent.
     """
     raw = vehicle_desc_msg.SerializeToString()
@@ -197,6 +197,7 @@ class AdelaideMetroApiClient:
         dict[str, TripInfo],
         dict[tuple[str, str], str],
         dict[str, tuple[str, str]],
+        dict[str, set[str]],
     ]:
         async with self._session.get(STATIC_GTFS_URL) as resp:
             resp.raise_for_status()
@@ -208,7 +209,8 @@ class AdelaideMetroApiClient:
         trips = self._read_trips(zf)
         direction_headsigns = self._read_direction_headsigns(zf)
         stop_directions = self._read_stop_directions(zf, trips)
-        return stops, routes, trips, direction_headsigns, stop_directions
+        route_stops = self._read_route_stops(zf)
+        return stops, routes, trips, direction_headsigns, stop_directions, route_stops
 
     def _read_stops(self, zf: zipfile.ZipFile) -> dict[str, StopInfo]:
         with zf.open("stops.txt") as f:
@@ -298,3 +300,28 @@ class AdelaideMetroApiClient:
                     stop_directions[stop_id].add((trip.route_id, trip.direction_id))
         # Each stop typically maps to one (route, direction) — take first
         return {stop_id: sorted(dirs)[0] for stop_id, dirs in stop_directions.items() if dirs}
+
+    def _read_route_stops(self, zf: zipfile.ZipFile) -> dict[str, set[str]]:
+        """Build a route_id -> set(stop_ids) mapping from stop_times.txt.
+
+        Used to auto-discover stops when none are manually configured.
+        """
+        route_stops: dict[str, set[str]] = defaultdict(set)
+        with zf.open("trips.txt") as f:
+            decoded = (line.decode("utf-8-sig") for line in f)
+            reader = csv.DictReader(decoded)
+            trip_routes: dict[str, str] = {
+                row["trip_id"]: row["route_id"]
+                for row in reader
+                if row.get("trip_id") and row.get("route_id")
+            }
+        with zf.open("stop_times.txt") as f:
+            decoded = (line.decode("utf-8-sig") for line in f)
+            reader = csv.DictReader(decoded)
+            for row in reader:
+                trip_id = row.get("trip_id")
+                stop_id = row.get("stop_id")
+                route_id = trip_routes.get(trip_id)
+                if route_id and stop_id:
+                    route_stops[route_id].add(stop_id)
+        return dict(route_stops)

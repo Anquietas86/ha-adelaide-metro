@@ -11,6 +11,7 @@ from .const import (
     CONF_MAX_DEPARTURES,
     CONF_REFRESH_INTERVAL,
     CONF_ROUTE_FILTERS,
+    CONF_ROUTES,
     CONF_STATIC_GTFS_REFRESH_HOURS,
     CONF_STOPS,
     DEFAULT_ALERT_GRACE_MINUTES,
@@ -32,10 +33,34 @@ def _translated_text(translated) -> str | None:
 class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
     def __init__(self, hass, entry):
         self.entry = entry
+
+        # Routes: new CONF_ROUTES takes precedence; fall back to CONF_ROUTE_FILTERS for backward compat
+        raw_routes = entry.options.get(
+            CONF_ROUTES,
+            entry.data.get(CONF_ROUTES, None),
+        )
+        if raw_routes is None:
+            raw_routes = entry.options.get(
+                CONF_ROUTE_FILTERS,
+                entry.data.get(CONF_ROUTE_FILTERS, []),
+            )
+        self.routes = set(raw_routes) if raw_routes else set()
+
+        # Stops: explicit list or empty (auto-discovered from routes)
+        raw_stops = entry.options.get(
+            CONF_STOPS,
+            entry.data.get(CONF_STOPS, []),
+        )
+        self.stops = (
+            [s.strip() for s in raw_stops] if isinstance(raw_stops, str)
+            else raw_stops if raw_stops else []
+        )
+
         self.api = AdelaideMetroApiClient(hass)
-        self.stops = entry.options.get(CONF_STOPS, entry.data.get(CONF_STOPS, []))
-        self.route_filters = set(entry.options.get(CONF_ROUTE_FILTERS, entry.data.get(CONF_ROUTE_FILTERS, [])))
-        self.max_departures = entry.options.get(CONF_MAX_DEPARTURES, entry.data.get(CONF_MAX_DEPARTURES, DEFAULT_MAX_DEPARTURES))
+        self.max_departures = entry.options.get(
+            CONF_MAX_DEPARTURES,
+            entry.data.get(CONF_MAX_DEPARTURES, DEFAULT_MAX_DEPARTURES),
+        )
         self._static_gtfs_refresh_hours = entry.options.get(
             CONF_STATIC_GTFS_REFRESH_HOURS,
             entry.data.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS),
@@ -45,17 +70,22 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         self.trip_index = {}
         self.direction_headsigns: dict[tuple[str, str], str] = {}
         self.stop_directions: dict[str, tuple[str, str]] = {}
+        self.route_stops: dict[str, set[str]] = {}
         self._last_static_gtfs_refresh: datetime | None = None
         self.alert_grace_minutes = entry.options.get(
             CONF_ALERT_GRACE_MINUTES,
             entry.data.get(CONF_ALERT_GRACE_MINUTES, DEFAULT_ALERT_GRACE_MINUTES),
         )
 
+        refresh_secs = entry.options.get(
+            CONF_REFRESH_INTERVAL,
+            entry.data.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL),
+        )
         super().__init__(
             hass,
             logger=_LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=entry.options.get(CONF_REFRESH_INTERVAL, entry.data.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL))),
+            update_interval=timedelta(seconds=refresh_secs),
         )
 
     def relevant_vehicles(self) -> list[dict]:
@@ -70,7 +100,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         relevant = []
         for vehicle in vehicles:
             route_id = vehicle.get("route_id")
-            if route_id and (route_id in self.route_filters or route_id in monitored_route_ids):
+            if route_id and (route_id in self.routes or route_id in monitored_route_ids):
                 relevant.append(vehicle)
         return relevant
 
@@ -86,8 +116,30 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             )
         )
         if needs_static_refresh:
-            self.stop_index, self.route_index, self.trip_index, self.direction_headsigns, self.stop_directions = await self.api.async_fetch_static_gtfs()
+            (
+                self.stop_index,
+                self.route_index,
+                self.trip_index,
+                self.direction_headsigns,
+                self.stop_directions,
+                self.route_stops,
+            ) = await self.api.async_fetch_static_gtfs()
             self._last_static_gtfs_refresh = now
+
+            # Auto-discover stops from routes when none were manually configured
+            if not self.stops:
+                discovered: set[str] = set()
+                for route_id in self.routes:
+                    stops_for_route = self.route_stops.get(route_id, set())
+                    discovered.update(stops_for_route)
+                self.stops = sorted(discovered)
+                _LOGGER.info(
+                    "Auto-discovered %d stops across %d route(s): %s",
+                    len(self.stops),
+                    len(self.routes),
+                    self.routes,
+                )
+
             _LOGGER.debug("Refreshed static GTFS data")
 
         feed = await self.api.async_fetch_trip_updates()
