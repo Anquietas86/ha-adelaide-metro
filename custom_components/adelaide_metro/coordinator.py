@@ -70,6 +70,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         self.trip_index = {}
         self.direction_headsigns: dict[tuple[str, str], str] = {}
         self.stop_directions: dict[str, tuple[str, str]] = {}
+        self.stop_directions_raw: dict[str, set[tuple[str, str]]] = {}
         self.route_stops: dict[str, set[str]] = {}
         self.stop_to_route: dict[str, str] = {}
         self._last_static_gtfs_refresh: datetime | None = None
@@ -149,6 +150,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
                 self.trip_index,
                 self.direction_headsigns,
                 self.stop_directions,
+                self.stop_directions_raw,
                 self.route_stops,
             ) = await self.api.async_fetch_static_gtfs()
             self._last_static_gtfs_refresh = now
@@ -167,11 +169,11 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
                     self.routes,
                 )
 
-            # Build stop→route mapping for device grouping
+            # Build stop→route mapping for device grouping (user routes only)
             self.stop_to_route.clear()
-            for route_id, stop_ids in self.route_stops.items():
-                for stop_id in stop_ids:
-                    # Prefer user-configured routes; first-assigned wins
+            for route_id in self.routes:
+                for stop_id in self.route_stops.get(route_id, set()):
+                    # Assign to the user-configured route; first wins
                     if stop_id not in self.stop_to_route:
                         self.stop_to_route[stop_id] = route_id
 

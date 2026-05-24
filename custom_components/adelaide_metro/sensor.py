@@ -208,12 +208,20 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def _direction_suffix(self) -> str | None:
-        """Derive stable direction label from static GTFS stop_directions lookup."""
+        """Derive stable direction label, preferring user's configured routes."""
         direction_headsigns = self.coordinator.direction_headsigns
-        stop_directions = self.coordinator.stop_directions
+        user_routes = self.coordinator.routes
 
-        # Primary: use static stop_directions (stop_id -> (route_id, direction_id))
-        route_dir = stop_directions.get(self._stop_id)
+        # Primary: prefer a (route, direction) pair on a user-configured route
+        raw_dirs = self.coordinator.stop_directions_raw.get(self._stop_id, set())
+        matching = [(r, d) for r, d in raw_dirs if r in user_routes]
+        for r, d in sorted(matching):
+            headsign = direction_headsigns.get((r, d))
+            if headsign:
+                return f"{headsign}-bound"
+
+        # Fallback: use the first direction assigned to this stop
+        route_dir = self.coordinator.stop_directions.get(self._stop_id)
         if route_dir:
             headsign = direction_headsigns.get(route_dir)
             if headsign:

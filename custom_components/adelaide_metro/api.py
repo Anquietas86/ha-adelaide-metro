@@ -197,6 +197,7 @@ class AdelaideMetroApiClient:
         dict[str, TripInfo],
         dict[tuple[str, str], str],
         dict[str, tuple[str, str]],
+        dict[str, set[tuple[str, str]]],
         dict[str, set[str]],
     ]:
         async with self._session.get(STATIC_GTFS_URL) as resp:
@@ -208,9 +209,9 @@ class AdelaideMetroApiClient:
         routes = self._read_routes(zf)
         trips = self._read_trips(zf)
         direction_headsigns = self._read_direction_headsigns(zf)
-        stop_directions = self._read_stop_directions(zf, trips)
+        stop_directions, stop_directions_raw = self._read_stop_directions(zf, trips)
         route_stops = self._read_route_stops(zf)
-        return stops, routes, trips, direction_headsigns, stop_directions, route_stops
+        return stops, routes, trips, direction_headsigns, stop_directions, stop_directions_raw, route_stops
 
     def _read_stops(self, zf: zipfile.ZipFile) -> dict[str, StopInfo]:
         with zf.open("stops.txt") as f:
@@ -286,9 +287,15 @@ class AdelaideMetroApiClient:
         # Pick the most common / first headsign per (route, direction)
         return {k: sorted(v)[0] for k, v in headsigns.items()}
 
-    def _read_stop_directions(self, zf: zipfile.ZipFile, trips: dict[str, TripInfo]) -> dict[str, tuple[str, str]]:
-        """Build a stop_id -> (route_id, direction_id) lookup from stop_times.txt."""
-        stop_directions: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    def _read_stop_directions(
+        self, zf: zipfile.ZipFile, trips: dict[str, TripInfo]
+    ) -> tuple[dict[str, tuple[str, str]], dict[str, set[tuple[str, str]]]]:
+        """Build stop_id -> (route_id, direction_id) lookups from stop_times.txt.
+
+        Returns (single_pick, raw) — single_pick picks one direction per stop,
+        raw preserves the full set for user-route preference matching.
+        """
+        raw: dict[str, set[tuple[str, str]]] = defaultdict(set)
         with zf.open("stop_times.txt") as f:
             decoded = (line.decode("utf-8-sig") for line in f)
             reader = csv.DictReader(decoded)
@@ -297,9 +304,10 @@ class AdelaideMetroApiClient:
                 stop_id = row.get("stop_id")
                 trip = trips.get(trip_id)
                 if trip and stop_id and trip.route_id and trip.direction_id is not None:
-                    stop_directions[stop_id].add((trip.route_id, trip.direction_id))
-        # Each stop typically maps to one (route, direction) — take first
-        return {stop_id: sorted(dirs)[0] for stop_id, dirs in stop_directions.items() if dirs}
+                    raw[stop_id].add((trip.route_id, trip.direction_id))
+        # Each stop typically maps to one (route, direction) — take first alphabetically
+        single = {stop_id: sorted(dirs)[0] for stop_id, dirs in raw.items() if dirs}
+        return single, dict(raw)
 
     def _read_route_stops(self, zf: zipfile.ZipFile) -> dict[str, set[str]]:
         """Build a route_id -> set(stop_ids) mapping from stop_times.txt.
