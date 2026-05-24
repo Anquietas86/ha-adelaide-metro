@@ -10,9 +10,11 @@ from .const import (
     CONF_MAX_DEPARTURES,
     CONF_REFRESH_INTERVAL,
     CONF_ROUTE_FILTERS,
+    CONF_STATIC_GTFS_REFRESH_HOURS,
     CONF_STOPS,
     DEFAULT_MAX_DEPARTURES,
     DEFAULT_REFRESH_INTERVAL,
+    DEFAULT_STATIC_GTFS_REFRESH_HOURS,
     DOMAIN,
 )
 
@@ -32,11 +34,16 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         self.stops = entry.options.get(CONF_STOPS, entry.data.get(CONF_STOPS, []))
         self.route_filters = set(entry.options.get(CONF_ROUTE_FILTERS, entry.data.get(CONF_ROUTE_FILTERS, [])))
         self.max_departures = entry.options.get(CONF_MAX_DEPARTURES, entry.data.get(CONF_MAX_DEPARTURES, DEFAULT_MAX_DEPARTURES))
+        self._static_gtfs_refresh_hours = entry.options.get(
+            CONF_STATIC_GTFS_REFRESH_HOURS,
+            entry.data.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS),
+        )
         self.stop_index = {}
         self.route_index = {}
         self.trip_index = {}
         self.direction_headsigns: dict[tuple[str, str], str] = {}
         self.stop_directions: dict[str, tuple[str, str]] = {}
+        self._last_static_gtfs_refresh: datetime | None = None
 
         super().__init__(
             hass,
@@ -46,12 +53,24 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
     async def _async_update_data(self):
-        if not self.stop_index:
+        now = datetime.now(UTC)
+
+        # Refresh static GTFS data periodically (default: every 24h)
+        needs_static_refresh = (
+            not self.stop_index
+            or (
+                self._last_static_gtfs_refresh is not None
+                and (now - self._last_static_gtfs_refresh).total_seconds() >= self._static_gtfs_refresh_hours * 3600
+            )
+        )
+        if needs_static_refresh:
             self.stop_index, self.route_index, self.trip_index, self.direction_headsigns, self.stop_directions = await self.api.async_fetch_static_gtfs()
+            self._last_static_gtfs_refresh = now
+            _LOGGER.debug("Refreshed static GTFS data")
 
         feed = await self.api.async_fetch_trip_updates()
         alerts_feed = await self.api.async_fetch_service_alerts()
-        now = datetime.now(UTC).timestamp()
+        now_ts = now.timestamp()
         departures_by_stop: dict[str, list[dict]] = {stop_id: [] for stop_id in self.stops}
 
         for entity in feed.entity:
@@ -60,8 +79,6 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
 
             trip_update = entity.trip_update
             route_id = trip_update.trip.route_id
-            if self.route_filters and route_id not in self.route_filters:
-                continue
 
             vehicle_id = trip_update.vehicle.id if trip_update.HasField("vehicle") else None
             vehicle_label = trip_update.vehicle.label if trip_update.HasField("vehicle") else None
@@ -79,7 +96,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
                 elif stu.HasField("arrival") and stu.arrival.time:
                     event = stu.arrival
 
-                if event is None or event.time < now:
+                if event is None or event.time < now_ts:
                     continue
 
                 departures_by_stop[stop_id].append(
@@ -91,7 +108,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
                         "trip_headsign": trip.trip_headsign if trip else None,
                         "direction_id": trip_update.trip.direction_id,
                         "stop_id": stop_id,
-                        "stop_sequence": stu.stop_sequence if stu.stop_sequence else None,
+                        "stop_sequence": stu.stop_sequence if stu.HasField("stop_sequence") else None,
                         "time": int(event.time),
                         "delay": event.delay if event.HasField("delay") else None,
                         "vehicle_id": vehicle_id,

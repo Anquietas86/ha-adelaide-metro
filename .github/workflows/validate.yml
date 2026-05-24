@@ -3,13 +3,33 @@ name: Validate
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
 
 jobs:
-  validate:
+  hassfest:
     runs-on: ubuntu-latest
+    name: Hassfest
     steps:
       - uses: actions/checkout@v4
-      - name: Basic tree check
-        run: |
-          test -f custom_components/adelaide_metro/manifest.json
-          test -f hacs.json
+      - name: Hassfest validation
+        uses: home-assistant/actions/hassfest@master
+
+  lint:
+    runs-on: ubuntu-latest
+    name: Lint (ruff)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check --select E,F,I,N,W
+
+  validate:
+    runs-on: ubuntu-latest
+    name: HACS validation
+    steps:
+      - uses: actions/checkout@v4
+      - name: HACS Action
+        uses: hacs/action@main
+        with:
+          category: integration

@@ -9,7 +9,8 @@
           "route_filters": "Route filters (comma separated, optional)",
           "max_departures": "Maximum departures to keep",
           "refresh_interval": "Refresh interval in seconds",
-          "expose_to_assistants": "Expose to assistants"
+          "expose_to_assistants": "Expose to assistants",
+          "static_gtfs_refresh_hours": "Static GTFS refresh interval in hours"
         }
       }
     },
@@ -32,7 +33,8 @@
           "route_filters": "Route filters (comma separated, optional)",
           "max_departures": "Maximum departures to keep",
           "refresh_interval": "Refresh interval in seconds",
-          "expose_to_assistants": "Expose to assistants"
+          "expose_to_assistants": "Expose to assistants",
+          "static_gtfs_refresh_hours": "Static GTFS refresh interval in hours"
         }
       }
     },

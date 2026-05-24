@@ -143,4 +143,4 @@ v0.1.0 — functional for stop departures and relevant service alerts. Early-sta
 Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) if present.
 
 ## License
-Apache 2.0
+MIT

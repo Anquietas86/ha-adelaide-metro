@@ -13,10 +13,12 @@ from .const import (
     CONF_MAX_DEPARTURES,
     CONF_REFRESH_INTERVAL,
     CONF_ROUTE_FILTERS,
+    CONF_STATIC_GTFS_REFRESH_HOURS,
     CONF_STOPS,
     DEFAULT_EXPOSE_TO_ASSISTANTS,
     DEFAULT_MAX_DEPARTURES,
     DEFAULT_REFRESH_INTERVAL,
+    DEFAULT_STATIC_GTFS_REFRESH_HOURS,
     DOMAIN,
 )
 
@@ -53,6 +55,7 @@ class AdelaideMetroConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_MAX_DEPARTURES: user_input[CONF_MAX_DEPARTURES],
                         CONF_REFRESH_INTERVAL: user_input[CONF_REFRESH_INTERVAL],
                         CONF_EXPOSE_TO_ASSISTANTS: user_input.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS),
+                        CONF_STATIC_GTFS_REFRESH_HOURS: user_input.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS),
                     },
                 )
 
@@ -63,6 +66,7 @@ class AdelaideMetroConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_MAX_DEPARTURES, default=DEFAULT_MAX_DEPARTURES): int,
                 vol.Optional(CONF_REFRESH_INTERVAL, default=DEFAULT_REFRESH_INTERVAL): int,
                 vol.Optional(CONF_EXPOSE_TO_ASSISTANTS, default=DEFAULT_EXPOSE_TO_ASSISTANTS): bool,
+                vol.Optional(CONF_STATIC_GTFS_REFRESH_HOURS, default=DEFAULT_STATIC_GTFS_REFRESH_HOURS): int,
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
@@ -91,6 +95,7 @@ class AdelaideMetroOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                         CONF_MAX_DEPARTURES: user_input[CONF_MAX_DEPARTURES],
                         CONF_REFRESH_INTERVAL: user_input[CONF_REFRESH_INTERVAL],
                         CONF_EXPOSE_TO_ASSISTANTS: user_input.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS),
+                        CONF_STATIC_GTFS_REFRESH_HOURS: user_input.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS),
                     },
                 )
 
@@ -102,6 +107,7 @@ class AdelaideMetroOptionsFlowHandler(config_entries.OptionsFlowWithReload):
                 vol.Optional(CONF_MAX_DEPARTURES, default=current.get(CONF_MAX_DEPARTURES, DEFAULT_MAX_DEPARTURES)): int,
                 vol.Optional(CONF_REFRESH_INTERVAL, default=current.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL)): int,
                 vol.Optional(CONF_EXPOSE_TO_ASSISTANTS, default=current.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS)): bool,
+                vol.Optional(CONF_STATIC_GTFS_REFRESH_HOURS, default=current.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS)): int,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
