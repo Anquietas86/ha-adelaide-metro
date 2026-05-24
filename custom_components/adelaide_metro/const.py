@@ -1,5 +1,5 @@
 DOMAIN = "adelaide_metro"
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "device_tracker"]
 
 CONF_STOPS = "stops"
 CONF_ROUTE_FILTERS = "route_filters"

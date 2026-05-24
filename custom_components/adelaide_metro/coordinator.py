@@ -58,6 +58,22 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=entry.options.get(CONF_REFRESH_INTERVAL, entry.data.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL))),
         )
 
+    def relevant_vehicles(self) -> list[dict]:
+        """Filter vehicles to those on the user's configured routes."""
+        vehicles = self.data.get("vehicles", [])
+        monitored_route_ids = {
+            dep.get("route_id")
+            for departures in self.data.get("departures", {}).values()
+            for dep in departures
+            if dep.get("route_id")
+        }
+        relevant = []
+        for vehicle in vehicles:
+            route_id = vehicle.get("route_id")
+            if route_id and (route_id in self.route_filters or route_id in monitored_route_ids):
+                relevant.append(vehicle)
+        return relevant
+
     async def _async_update_data(self):
         now = datetime.now(UTC)
 

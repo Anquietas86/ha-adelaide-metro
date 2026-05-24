@@ -93,7 +93,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         known_alert_ids.add(alert_id)
         alert_seen_time[alert_id] = datetime.now(UTC)
 
-    active_vehicles = _filter_relevant_vehicles(coordinator)
+    active_vehicles = coordinator.relevant_vehicles()
     for vehicle in active_vehicles:
         vehicle_id = vehicle["id"]
         entities.append(AdelaideMetroVehicleSensor(coordinator, vehicle))
@@ -152,7 +152,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         known_alert_ids.update(stale_ids - expired_ids)
 
         # Manage vehicle entities — appear and disappear as vehicles come and go
-        current_vehicles = _filter_relevant_vehicles(coordinator)
+        current_vehicles = coordinator.relevant_vehicles()
         current_vehicle_ids = {v["id"] for v in current_vehicles}
 
         new_vehicle_ids = current_vehicle_ids - known_vehicle_ids
@@ -185,30 +185,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     if expose_to_assistants:
         _apply_assistant_exposure(hass, DOMAIN)
-
-
-def _filter_relevant_vehicles(coordinator) -> list[dict]:
-    """Filter vehicles to those serving the user's configured routes."""
-    vehicles = coordinator.data.get("vehicles", [])
-    route_filters = set(coordinator.route_filters)
-
-    # Determine which routes are relevant:
-    # 1. Routes explicitly configured as route filters
-    # 2. Routes seen in departure data for configured stops
-    monitored_route_ids = {
-        dep.get("route_id")
-        for departures in coordinator.data.get("departures", {}).values()
-        for dep in departures
-        if dep.get("route_id")
-    }
-
-    relevant = []
-    for vehicle in vehicles:
-        route_id = vehicle.get("route_id")
-        if route_id and (route_id in route_filters or route_id in monitored_route_ids):
-            relevant.append(vehicle)
-
-    return relevant
 
 
 class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
@@ -422,7 +398,7 @@ class AdelaideMetroVehicleSensor(CoordinatorEntity, SensorEntity):
         return self._current_vehicle() is not None
 
     def _current_vehicle(self) -> dict:
-        for vehicle in _filter_relevant_vehicles(self.coordinator):
+        for vehicle in self.coordinator.relevant_vehicles():
             if vehicle["id"] == self._vehicle_id:
                 return vehicle
         return {}
