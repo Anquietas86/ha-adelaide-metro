@@ -3,79 +3,28 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
-from .const import CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS, DOMAIN
+from .const import DOMAIN
+from .entity import AssistantExposureMixin, remove_orphaned_entities
 
 _LOGGER = logging.getLogger(__name__)
 
+MAX_STATE_LENGTH = 255
 
-@callback
-def _expose_entity_to_voice_assistants(hass: HomeAssistant, entity_id: str) -> None:
-    registry = er.async_get(hass)
-    if entity_id and registry.async_get(entity_id):
-        try:
-            registry.async_update_entity_options(entity_id, "conversation", {"should_expose": True})
-            registry.async_update_entity_options(entity_id, "cloud.google_assistant", {"should_expose": True})
-        except Exception as e:
-            _LOGGER.debug("Could not expose %s to voice assistants: %s", entity_id, e)
-
-
-@callback
-def _apply_assistant_exposure(hass: HomeAssistant, domain: str) -> None:
-    registry = er.async_get(hass)
-    for entity in list(registry.entities.values()):
-        if entity.platform != domain:
-            continue
-        _expose_entity_to_voice_assistants(hass, entity.entity_id)
-
-
-def _filter_relevant_alerts(coordinator) -> list[dict]:
-    alerts = coordinator.data.get("alerts", [])
-    stop_ids = set(coordinator.stops)
-    routes = set(coordinator.routes)
-    monitored_route_ids = {
-        dep.get("route_id")
-        for departures in coordinator.data.get("departures", {}).values()
-        for dep in departures
-        if dep.get("route_id")
-    }
-    relevant = []
-
-    for alert in alerts:
-        informed = alert.get("informed_entities", [])
-        if not informed:
-            continue
-
-        matches = False
-        for entity in informed:
-            route_id = entity.get("route_id")
-            stop_id = entity.get("stop_id")
-            if stop_id and stop_id in stop_ids:
-                matches = True
-                break
-            if routes and route_id and route_id in routes:
-                matches = True
-                break
-            if route_id and route_id in monitored_route_ids:
-                matches = True
-                break
-        if matches:
-            relevant.append(alert)
-
-    return relevant
+ALERT_UNIQUE_ID_PREFIX = "adelaide_metro_alert_"
+VEHICLE_UNIQUE_ID_PREFIX = "adelaide_metro_vehicle_"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    expose_to_assistants = entry.options.get(
-        CONF_EXPOSE_TO_ASSISTANTS, entry.data.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS)
-    )
 
     known_alert_ids: set[str] = set()
     alert_seen_time: dict[str, datetime] = {}
@@ -86,28 +35,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         entities.append(AdelaideMetroNextDepartureSensor(coordinator, stop_id))
         entities.append(AdelaideMetroUpcomingDeparturesSensor(coordinator, stop_id))
 
-    relevant_alerts = _filter_relevant_alerts(coordinator)
-    for alert in relevant_alerts:
+    for alert in coordinator.relevant_alerts():
         alert_id = alert.get("id") or "unknown"
         entities.append(AdelaideMetroAlertEntity(coordinator, alert))
         known_alert_ids.add(alert_id)
         alert_seen_time[alert_id] = datetime.now(UTC)
 
-    active_vehicles = coordinator.relevant_vehicles()
-    for vehicle in active_vehicles:
-        vehicle_id = vehicle["id"]
+    for vehicle in coordinator.relevant_vehicles():
         entities.append(AdelaideMetroVehicleSensor(coordinator, vehicle))
-        known_vehicle_ids.add(vehicle_id)
+        known_vehicle_ids.add(vehicle["id"])
 
+    # Alerts and vehicles from before a restart that are no longer active
+    remove_orphaned_entities(
+        hass,
+        entry,
+        "sensor",
+        (ALERT_UNIQUE_ID_PREFIX, VEHICLE_UNIQUE_ID_PREFIX),
+        {e.unique_id for e in entities},
+    )
     async_add_entities(entities)
 
     @callback
     def _handle_coordinator_update() -> None:
-        nonlocal known_alert_ids, known_vehicle_ids, alert_seen_time
         now = datetime.now(UTC)
         grace_seconds = coordinator.alert_grace_minutes * 60
 
-        current_alerts = _filter_relevant_alerts(coordinator)
+        current_alerts = coordinator.relevant_alerts()
         current_ids = {a.get("id") or "unknown" for a in current_alerts}
 
         # Update last-seen time for alerts still active
@@ -124,11 +77,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 if (a.get("id") or "unknown") in new_ids
             ]
             async_add_entities(new_entities)
-            for aid in new_ids:
-                alert_seen_time[aid] = now
             _LOGGER.debug("Added %d new alert entities: %s", len(new_entities), new_ids)
-            if expose_to_assistants:
-                _apply_assistant_exposure(hass, DOMAIN)
 
         # Remove stale alerts only after grace period has expired
         expired_ids = {
@@ -139,7 +88,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         if expired_ids:
             registry = er.async_get(hass)
             for alert_id in expired_ids:
-                unique_id = f"adelaide_metro_alert_{alert_id}"
+                unique_id = f"{ALERT_UNIQUE_ID_PREFIX}{alert_id}"
                 entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
                 if entity_id:
                     registry.async_remove(entity_id)
@@ -166,13 +115,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ]
             async_add_entities(new_vehicle_entities)
             _LOGGER.debug("Added %d new vehicle entities: %s", len(new_vehicle_entities), new_vehicle_ids)
-            if expose_to_assistants:
-                _apply_assistant_exposure(hass, DOMAIN)
 
         if stale_vehicle_ids:
             registry = er.async_get(hass)
             for vehicle_id in stale_vehicle_ids:
-                unique_id = f"adelaide_metro_vehicle_{vehicle_id}"
+                unique_id = f"{VEHICLE_UNIQUE_ID_PREFIX}{vehicle_id}"
                 entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
                 if entity_id:
                     registry.async_remove(entity_id)
@@ -181,26 +128,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         known_vehicle_ids.clear()
         known_vehicle_ids.update(current_vehicle_ids)
 
-    coordinator.async_add_listener(_handle_coordinator_update)
-
-    if expose_to_assistants:
-        _apply_assistant_exposure(hass, DOMAIN)
+    entry.async_on_unload(coordinator.async_add_listener(_handle_coordinator_update))
 
 
-class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
+class AdelaideMetroBaseSensor(AssistantExposureMixin, CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
+    # The departure list changes every poll; keep it out of the recorder database
+    _unrecorded_attributes = frozenset({"departures"})
 
-    def __init__(self, coordinator, stop_id: str) -> None:
+    def __init__(self, coordinator, stop_id: str, suffix: str) -> None:
         super().__init__(coordinator)
         self._stop_id = stop_id
         self._stop = coordinator.stop_index.get(stop_id)
+        self._display_name = self._device_name
         route_id = coordinator.stop_route_id(stop_id)
-        self._attr_device_info = coordinator.resolve_route_device(route_id) if route_id else {
-            "identifiers": {(DOMAIN, f"stop_{stop_id}")},
-            "name": self._device_name,
-            "manufacturer": "Adelaide Metro",
-            "model": "GTFS Realtime Stop",
-        }
+        if route_id:
+            self._attr_device_info = coordinator.resolve_route_device(route_id)
+            self._attr_name = f"{self._display_name} {suffix}"
+        else:
+            # The stop gets its own device named after it, so don't repeat the stop name
+            self._attr_device_info = {
+                "identifiers": {(DOMAIN, f"stop_{stop_id}")},
+                "name": self._display_name,
+                "manufacturer": "Adelaide Metro",
+                "model": "GTFS Realtime Stop",
+            }
+            self._attr_name = suffix[:1].upper() + suffix[1:]
 
     @property
     def _departures(self):
@@ -230,9 +183,11 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
         # Fallback: use live departure data if static lookup missed
         if self._departures:
             dep = self._departures[0]
-            route_id = dep.get("route_id")
-            direction_id = str(dep.get("direction_id", ""))
-            headsign = direction_headsigns.get((route_id, direction_id)) or dep.get("trip_headsign")
+            direction_id = dep.get("direction_id")
+            headsign = None
+            if direction_id is not None:
+                headsign = direction_headsigns.get((dep.get("route_id"), str(direction_id)))
+            headsign = headsign or dep.get("trip_headsign")
             if headsign:
                 return f"{headsign}-bound"
 
@@ -249,7 +204,7 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
         return {
             "stop_id": self._stop_id,
             "stop_name": self._stop.stop_name if self._stop else None,
-            "display_name": self._device_name,
+            "display_name": self._display_name,
             "stop_code": self._stop.stop_code if self._stop else None,
             "latitude": self._stop.stop_lat if self._stop else None,
             "longitude": self._stop.stop_lon if self._stop else None,
@@ -259,17 +214,19 @@ class AdelaideMetroBaseSensor(CoordinatorEntity, SensorEntity):
 
 
 class AdelaideMetroNextDepartureSensor(AdelaideMetroBaseSensor):
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+
     def __init__(self, coordinator, stop_id: str) -> None:
-        super().__init__(coordinator, stop_id)
-        self._attr_name = f"{self._device_name} next departure"
+        super().__init__(coordinator, stop_id, "next departure")
         self._attr_unique_id = f"adelaide_metro_{stop_id}_next_departure"
         self._attr_icon = "mdi:bus-clock"
-        self._attr_native_unit_of_measurement = "min"
 
     @property
     def native_value(self):
         if not self._departures:
-            return 0
+            # Unknown rather than 0, which would read as "departing now"
+            return None
         next_time = self._departures[0]["time"]
         delta = int((next_time - datetime.now(UTC).timestamp()) // 60)
         return max(delta, 0)
@@ -279,16 +236,15 @@ class AdelaideMetroNextDepartureSensor(AdelaideMetroBaseSensor):
         attrs = super().extra_state_attributes
         if self._departures:
             next_time = self._departures[0]["time"]
-            attrs["arriving_at"] = datetime.fromtimestamp(
-                next_time, tz=UTC
+            attrs["arriving_at"] = dt_util.as_local(
+                datetime.fromtimestamp(next_time, tz=UTC)
             ).strftime("%H:%M")
         return attrs
 
 
 class AdelaideMetroUpcomingDeparturesSensor(AdelaideMetroBaseSensor):
     def __init__(self, coordinator, stop_id: str) -> None:
-        super().__init__(coordinator, stop_id)
-        self._attr_name = f"{self._device_name} upcoming"
+        super().__init__(coordinator, stop_id, "upcoming")
         self._attr_unique_id = f"adelaide_metro_{stop_id}_upcoming_departures"
         self._attr_icon = "mdi:format-list-bulleted"
 
@@ -297,7 +253,7 @@ class AdelaideMetroUpcomingDeparturesSensor(AdelaideMetroBaseSensor):
         return len(self._departures)
 
 
-class AdelaideMetroAlertsSensor(CoordinatorEntity, SensorEntity):
+class AdelaideMetroAlertsSensor(AssistantExposureMixin, CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
 
     def __init__(self, coordinator) -> None:
@@ -327,18 +283,18 @@ class AdelaideMetroAlertsSensor(CoordinatorEntity, SensorEntity):
         ]
         return {
             "alerts": slim_alerts,
-            "relevant_alert_count": len(_filter_relevant_alerts(self.coordinator)),
+            "relevant_alert_count": len(self.coordinator.relevant_alerts()),
         }
 
 
-class AdelaideMetroAlertEntity(CoordinatorEntity, SensorEntity):
+class AdelaideMetroAlertEntity(AssistantExposureMixin, CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
 
     def __init__(self, coordinator, alert: dict) -> None:
         super().__init__(coordinator)
         self._alert_id = alert.get("id") or "unknown"
         self._attr_name = alert.get("header") or f"Alert {self._alert_id}"
-        self._attr_unique_id = f"adelaide_metro_alert_{self._alert_id}"
+        self._attr_unique_id = f"{ALERT_UNIQUE_ID_PREFIX}{self._alert_id}"
         self._attr_icon = "mdi:alert"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, "network")},
@@ -348,19 +304,25 @@ class AdelaideMetroAlertEntity(CoordinatorEntity, SensorEntity):
         }
 
     def _current_alert(self) -> dict | None:
-        for alert in _filter_relevant_alerts(self.coordinator):
-            if alert.get("id") == self._alert_id:
+        for alert in self.coordinator.relevant_alerts():
+            if (alert.get("id") or "unknown") == self._alert_id:
                 return alert
         return None
 
     @property
     def native_value(self):
         alert = self._current_alert()
-        return (alert.get("header") or "Active") if alert else None
+        if not alert:
+            return None
+        # HA rejects states longer than 255 characters
+        header = alert.get("header") or "Active"
+        if len(header) > MAX_STATE_LENGTH:
+            header = header[: MAX_STATE_LENGTH - 1] + "…"
+        return header
 
     @property
     def available(self):
-        return self._current_alert() is not None
+        return super().available and self._current_alert() is not None
 
     @property
     def extra_state_attributes(self):
@@ -376,7 +338,7 @@ class AdelaideMetroAlertEntity(CoordinatorEntity, SensorEntity):
         }
 
 
-class AdelaideMetroVehicleSensor(CoordinatorEntity, SensorEntity):
+class AdelaideMetroVehicleSensor(AssistantExposureMixin, CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
 
     def __init__(self, coordinator, vehicle: dict) -> None:
@@ -400,23 +362,26 @@ class AdelaideMetroVehicleSensor(CoordinatorEntity, SensorEntity):
             prefix = route_label
 
         self._attr_name = f"{prefix} {vehicle_label}"
-        self._attr_unique_id = f"adelaide_metro_vehicle_{self._vehicle_id}"
+        self._attr_unique_id = f"{VEHICLE_UNIQUE_ID_PREFIX}{self._vehicle_id}"
         self._attr_icon = "mdi:bus"
         self._attr_device_info = coordinator.resolve_route_device(route_id)
 
     @property
     def native_value(self):
-        return self._current_vehicle().get("vehicle_label") or self._current_vehicle().get("vehicle_id") or "Active"
+        vehicle = self._current_vehicle()
+        if not vehicle:
+            return None
+        return vehicle.get("vehicle_label") or vehicle.get("vehicle_id") or "Active"
 
     @property
     def available(self):
-        return self._current_vehicle() is not None
+        return super().available and self._current_vehicle() is not None
 
-    def _current_vehicle(self) -> dict:
+    def _current_vehicle(self) -> dict | None:
         for vehicle in self.coordinator.relevant_vehicles():
             if vehicle["id"] == self._vehicle_id:
                 return vehicle
-        return {}
+        return None
 
     @property
     def extra_state_attributes(self):
@@ -451,7 +416,7 @@ class AdelaideMetroVehicleSensor(CoordinatorEntity, SensorEntity):
             "latitude": vehicle.get("latitude"),
             "longitude": vehicle.get("longitude"),
             "bearing": vehicle.get("bearing"),
-            "speed_ms": round(vehicle["speed"], 1) if vehicle.get("speed") is not None else None,
+            "speed_ms": speed_ms,
             "speed_kmh": speed_kmh,
             "current_status": current_status_map.get(vehicle.get("current_status"), None),
             "air_conditioned": vehicle.get("air_conditioned"),

@@ -10,17 +10,21 @@
           "max_departures": "Maximum departures to keep",
           "refresh_interval": "Refresh interval in seconds",
           "expose_to_assistants": "Expose to assistants",
-          "static_gtfs_refresh_hours": "Static GTFS refresh interval in hours"
+          "static_gtfs_refresh_hours": "Static GTFS refresh interval in hours",
+          "alert_grace_minutes": "Alert grace period in minutes"
         }
       }
     },
     "error": {
       "no_routes": "Enter at least one route ID (e.g. SEAFRD).",
       "invalid_max_departures": "Maximum departures must be at least 1.",
-      "invalid_refresh_interval": "Refresh interval must be at least 15 seconds."
+      "invalid_refresh_interval": "Refresh interval must be at least 15 seconds.",
+      "invalid_static_gtfs_refresh_hours": "Static GTFS refresh interval must be at least 1 hour.",
+      "invalid_alert_grace_minutes": "Alert grace period cannot be negative."
     },
     "abort": {
-      "already_configured": "These routes are already configured."
+      "already_configured": "These routes are already configured.",
+      "single_instance_allowed": "Adelaide Metro is already configured. Add more routes from its Configure menu."
     }
   },
   "options": {
@@ -34,14 +38,17 @@
           "max_departures": "Maximum departures to keep",
           "refresh_interval": "Refresh interval in seconds",
           "expose_to_assistants": "Expose to assistants",
-          "static_gtfs_refresh_hours": "Static GTFS refresh interval in hours"
+          "static_gtfs_refresh_hours": "Static GTFS refresh interval in hours",
+          "alert_grace_minutes": "Alert grace period in minutes"
         }
       }
     },
     "error": {
       "no_routes": "Enter at least one route ID (e.g. SEAFRD).",
       "invalid_max_departures": "Maximum departures must be at least 1.",
-      "invalid_refresh_interval": "Refresh interval must be at least 15 seconds."
+      "invalid_refresh_interval": "Refresh interval must be at least 15 seconds.",
+      "invalid_static_gtfs_refresh_hours": "Static GTFS refresh interval must be at least 1 hour.",
+      "invalid_alert_grace_minutes": "Alert grace period cannot be negative."
     }
   }
 }

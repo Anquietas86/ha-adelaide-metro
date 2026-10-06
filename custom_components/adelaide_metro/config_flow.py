@@ -4,8 +4,8 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
     CONF_ALERT_GRACE_MINUTES,
@@ -24,6 +24,39 @@ from .const import (
 )
 
 
+def _split_ids(value: str) -> list[str]:
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def _validate(user_input: dict[str, Any]) -> dict[str, str]:
+    errors: dict[str, str] = {}
+    if not _split_ids(user_input.get(CONF_ROUTES, "")):
+        errors[CONF_ROUTES] = "no_routes"
+    elif user_input[CONF_MAX_DEPARTURES] < 1:
+        errors[CONF_MAX_DEPARTURES] = "invalid_max_departures"
+    elif user_input[CONF_REFRESH_INTERVAL] < 15:
+        errors[CONF_REFRESH_INTERVAL] = "invalid_refresh_interval"
+    elif user_input.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS) < 1:
+        errors[CONF_STATIC_GTFS_REFRESH_HOURS] = "invalid_static_gtfs_refresh_hours"
+    elif user_input.get(CONF_ALERT_GRACE_MINUTES, DEFAULT_ALERT_GRACE_MINUTES) < 0:
+        errors[CONF_ALERT_GRACE_MINUTES] = "invalid_alert_grace_minutes"
+    return errors
+
+
+def _entry_data(user_input: dict[str, Any]) -> dict[str, Any]:
+    return {
+        CONF_ROUTES: _split_ids(user_input.get(CONF_ROUTES, "")),
+        CONF_STOPS: _split_ids(user_input.get(CONF_STOPS, "")),
+        CONF_MAX_DEPARTURES: user_input[CONF_MAX_DEPARTURES],
+        CONF_REFRESH_INTERVAL: user_input[CONF_REFRESH_INTERVAL],
+        CONF_EXPOSE_TO_ASSISTANTS: user_input.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS),
+        CONF_STATIC_GTFS_REFRESH_HOURS: user_input.get(
+            CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS
+        ),
+        CONF_ALERT_GRACE_MINUTES: user_input.get(CONF_ALERT_GRACE_MINUTES, DEFAULT_ALERT_GRACE_MINUTES),
+    }
+
+
 class AdelaideMetroConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
@@ -32,39 +65,16 @@ class AdelaideMetroConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
         return AdelaideMetroOptionsFlowHandler()
 
-    async def async_step_user(self, user_input=None) -> FlowResult:
+    async def async_step_user(self, user_input=None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            routes_str = user_input.get(CONF_ROUTES, "")
-            routes = [r.strip() for r in routes_str.split(",") if r.strip()]
-            stops_str = user_input.get(CONF_STOPS, "")
-            stops = [s.strip() for s in stops_str.split(",") if s.strip()]
-
-            if not routes:
-                errors[CONF_ROUTES] = "no_routes"
-            elif user_input[CONF_MAX_DEPARTURES] < 1:
-                errors[CONF_MAX_DEPARTURES] = "invalid_max_departures"
-            elif user_input[CONF_REFRESH_INTERVAL] < 15:
-                errors[CONF_REFRESH_INTERVAL] = "invalid_refresh_interval"
-            else:
-                await self.async_set_unique_id("|".join(sorted(routes)))
+            errors = _validate(user_input)
+            if not errors:
+                data = _entry_data(user_input)
+                await self.async_set_unique_id("|".join(sorted(data[CONF_ROUTES])))
                 self._abort_if_unique_id_configured()
-                expose = user_input.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS)
-                gtfs_hrs = user_input.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS)
-                grace = user_input.get(CONF_ALERT_GRACE_MINUTES, DEFAULT_ALERT_GRACE_MINUTES)
-                return self.async_create_entry(
-                    title="Adelaide Metro Realtime",
-                    data={
-                        CONF_ROUTES: routes,
-                        CONF_STOPS: stops,
-                        CONF_MAX_DEPARTURES: user_input[CONF_MAX_DEPARTURES],
-                        CONF_REFRESH_INTERVAL: user_input[CONF_REFRESH_INTERVAL],
-                        CONF_EXPOSE_TO_ASSISTANTS: expose,
-                        CONF_STATIC_GTFS_REFRESH_HOURS: gtfs_hrs,
-                        CONF_ALERT_GRACE_MINUTES: grace,
-                    },
-                )
+                return self.async_create_entry(title="Adelaide Metro Realtime", data=data)
 
         schema = vol.Schema(
             {
@@ -81,37 +91,13 @@ class AdelaideMetroConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class AdelaideMetroOptionsFlowHandler(config_entries.OptionsFlowWithReload):
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            routes_str = user_input.get(CONF_ROUTES, "")
-            routes = [r.strip() for r in routes_str.split(",") if r.strip()]
-            stops_str = user_input.get(CONF_STOPS, "")
-            stops = [s.strip() for s in stops_str.split(",") if s.strip()]
-
-            if not routes:
-                errors[CONF_ROUTES] = "no_routes"
-            elif user_input[CONF_MAX_DEPARTURES] < 1:
-                errors[CONF_MAX_DEPARTURES] = "invalid_max_departures"
-            elif user_input[CONF_REFRESH_INTERVAL] < 15:
-                errors[CONF_REFRESH_INTERVAL] = "invalid_refresh_interval"
-            else:
-                expose = user_input.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS)
-                gtfs_hrs = user_input.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS)
-                grace = user_input.get(CONF_ALERT_GRACE_MINUTES, DEFAULT_ALERT_GRACE_MINUTES)
-                return self.async_create_entry(
-                    title="",
-                    data={
-                        CONF_ROUTES: routes,
-                        CONF_STOPS: stops,
-                        CONF_MAX_DEPARTURES: user_input[CONF_MAX_DEPARTURES],
-                        CONF_REFRESH_INTERVAL: user_input[CONF_REFRESH_INTERVAL],
-                        CONF_EXPOSE_TO_ASSISTANTS: expose,
-                        CONF_STATIC_GTFS_REFRESH_HOURS: gtfs_hrs,
-                        CONF_ALERT_GRACE_MINUTES: grace,
-                    },
-                )
+            errors = _validate(user_input)
+            if not errors:
+                return self.async_create_entry(title="", data=_entry_data(user_input))
 
         current = {**self.config_entry.data, **self.config_entry.options}
         # Routes: prefer CONF_ROUTES, fall back to CONF_ROUTE_FILTERS for existing installs

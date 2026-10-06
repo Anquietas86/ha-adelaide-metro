@@ -13,6 +13,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .entity import AssistantExposureMixin, remove_orphaned_entities
+
+TRACKER_UNIQUE_ID_PREFIX = "adelaide_metro_tracker_"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,11 +33,14 @@ async def async_setup_entry(
         entities.append(AdelaideMetroVehicleTracker(coordinator, vehicle))
         known_vehicle_ids.add(vehicle_id)
 
+    # Trackers from before a restart whose vehicles are no longer running
+    remove_orphaned_entities(
+        hass, entry, "device_tracker", (TRACKER_UNIQUE_ID_PREFIX,), {e.unique_id for e in entities}
+    )
     async_add_entities(entities)
 
     @callback
     def _handle_coordinator_update() -> None:
-        nonlocal known_vehicle_ids
         current_vehicles = coordinator.relevant_vehicles()
         current_ids = {v["id"] for v in current_vehicles}
 
@@ -53,7 +59,7 @@ async def async_setup_entry(
         if stale_ids:
             registry = er.async_get(hass)
             for vehicle_id in stale_ids:
-                unique_id = f"adelaide_metro_tracker_{vehicle_id}"
+                unique_id = f"{TRACKER_UNIQUE_ID_PREFIX}{vehicle_id}"
                 entity_id = registry.async_get_entity_id("device_tracker", DOMAIN, unique_id)
                 if entity_id:
                     registry.async_remove(entity_id)
@@ -62,14 +68,13 @@ async def async_setup_entry(
         known_vehicle_ids.clear()
         known_vehicle_ids.update(current_ids)
 
-    coordinator.async_add_listener(_handle_coordinator_update)
+    entry.async_on_unload(coordinator.async_add_listener(_handle_coordinator_update))
 
 
-class AdelaideMetroVehicleTracker(CoordinatorEntity, TrackerEntity):
+class AdelaideMetroVehicleTracker(AssistantExposureMixin, CoordinatorEntity, TrackerEntity):
     _attr_has_entity_name = True
     _attr_source_type = SourceType.GPS
     _attr_force_update = True
-    _unrecorded_attributes = frozenset({})
 
     def __init__(self, coordinator, vehicle: dict) -> None:
         super().__init__(coordinator)
@@ -91,7 +96,7 @@ class AdelaideMetroVehicleTracker(CoordinatorEntity, TrackerEntity):
             prefix = route_label
 
         self._attr_name = f"{prefix} {vehicle_label}"
-        self._attr_unique_id = f"adelaide_metro_tracker_{self._vehicle_id}"
+        self._attr_unique_id = f"{TRACKER_UNIQUE_ID_PREFIX}{self._vehicle_id}"
         self._attr_icon = "mdi:bus"
         self._attr_device_info = coordinator.resolve_route_device(route_id)
 
@@ -100,7 +105,7 @@ class AdelaideMetroVehicleTracker(CoordinatorEntity, TrackerEntity):
 
     @property
     def available(self) -> bool:
-        return self._current_vehicle() is not None
+        return super().available and self._current_vehicle() is not None
 
     def _current_vehicle(self) -> dict | None:
         for vehicle in self.coordinator.relevant_vehicles():

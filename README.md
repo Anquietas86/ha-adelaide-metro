@@ -50,6 +50,8 @@ A HACS-compatible Home Assistant custom integration for Adelaide Metro realtime 
 
 ## Installation
 
+Requires Home Assistant **2025.8** or newer. One Adelaide Metro entry covers all your routes; add more routes from its **Configure** menu rather than adding the integration twice.
+
 ### HACS (recommended)
 1. In HACS, go to **Integrations → Custom repositories**
 2. Add `https://github.com/Anquietas86/ha-adelaide-metro` as an **Integration**
