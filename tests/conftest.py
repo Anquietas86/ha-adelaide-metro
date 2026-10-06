@@ -67,7 +67,7 @@ def build_static_zip(scheduled_in_s: int | None = None) -> bytes:
 
 
 def build_trip_updates(
-    departure_ts: int | None, delay: int | None = None, cancel_trip: str | None = None
+    departure_ts: int | None, delay: int | None = None, cancel_trip: str | None = None, trip_id: str = "T1"
 ) -> bytes:
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.header.gtfs_realtime_version = "2.0"
@@ -78,7 +78,7 @@ def build_trip_updates(
         ent.trip_update.trip.schedule_relationship = gtfs_realtime_pb2.TripDescriptor.CANCELED
     if departure_ts is not None:
         ent = feed.entity.add(id="tu1")
-        ent.trip_update.trip.trip_id = "T1"
+        ent.trip_update.trip.trip_id = trip_id
         ent.trip_update.trip.route_id = "SEAFRD"
         ent.trip_update.trip.direction_id = 0
         ent.trip_update.vehicle.id = "3020"
@@ -144,11 +144,12 @@ def feeds(hass, aioclient_mock):
         scheduled_in_s: int | None = None,
         delay: int | None = None,
         cancel_trip: str | None = None,
+        live_trip: str = "T1",
     ):
         aioclient_mock.clear_requests()
         aioclient_mock.get(STATIC_GTFS_URL, content=build_static_zip(scheduled_in_s), status=static_status)
         dep = int(time.time()) + departure_in_s if departure_in_s is not None else None
-        aioclient_mock.get(TRIP_UPDATES_URL, content=build_trip_updates(dep, delay, cancel_trip))
+        aioclient_mock.get(TRIP_UPDATES_URL, content=build_trip_updates(dep, delay, cancel_trip, live_trip))
         aioclient_mock.get(SERVICE_ALERTS_URL, content=build_alerts(alert))
         aioclient_mock.get(VEHICLE_POSITIONS_URL, content=build_vehicles(list(vehicles)))
 

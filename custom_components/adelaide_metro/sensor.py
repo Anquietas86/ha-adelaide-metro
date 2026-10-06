@@ -183,6 +183,7 @@ class AdelaideMetroBaseSensor(AssistantExposureMixin, CoordinatorEntity, SensorE
             ),
             "realtime": dep.get("realtime", False),
             "delay_minutes": dep.get("delay_minutes"),
+            "delay_source": dep.get("delay_source"),
             "route_id": dep.get("route_id"),
             "trip_headsign": dep.get("trip_headsign"),
         }

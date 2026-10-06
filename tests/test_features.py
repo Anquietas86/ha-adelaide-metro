@@ -152,3 +152,25 @@ async def test_timetable_across_midnight(hass: HomeAssistant, feeds, config_entr
     state = hass.states.get(_entity(hass, "sensor", "adelaide_metro_16490_next_departure"))
     assert state.attributes["departures"][0]["trip_id"] == "T3"
     assert state.attributes["arriving_at"] == "00:15"
+
+
+async def test_delay_inferred_from_timetable(hass: HomeAssistant, feeds, config_entry) -> None:
+    # T3 is timetabled in 20 min; the live feed says 25 min and sends no delay
+    feeds(departure_in_s=SCHEDULED_IN_S + 300, scheduled_in_s=SCHEDULED_IN_S, live_trip="T3")
+    await _setup(hass, config_entry)
+
+    state = hass.states.get(_entity(hass, "sensor", "adelaide_metro_16490_next_departure"))
+    dep = state.attributes["departures"][0]
+    assert dep["trip_id"] == "T3" and dep["realtime"] is True
+    assert dep["delay_minutes"] == 5
+    assert dep["delay_source"] == "timetable"
+    assert dep["time"] - dep["scheduled_time"] == 300
+    assert state.attributes["delay_source"] == "timetable"
+
+
+async def test_feed_delay_wins(hass: HomeAssistant, feeds, config_entry) -> None:
+    feeds(departure_in_s=SCHEDULED_IN_S + 300, delay=60, scheduled_in_s=SCHEDULED_IN_S, live_trip="T3")
+    await _setup(hass, config_entry)
+    dep = hass.states.get(_entity(hass, "sensor", "adelaide_metro_16490_next_departure")).attributes["departures"][0]
+    assert dep["delay_minutes"] == 1
+    assert dep["delay_source"] == "feed"

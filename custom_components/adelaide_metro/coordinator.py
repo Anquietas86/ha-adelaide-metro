@@ -41,6 +41,9 @@ from .schedule import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Live vs timetabled times further apart than this are treated as different runs
+MAX_INFERRED_DELAY = timedelta(hours=3)
+
 
 def _translated_text(translated) -> str | None:
     if not translated or not translated.translation:
@@ -97,6 +100,8 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         self.stop_to_route: dict[str, str] = {}
         self.calendar = ServiceCalendar()
         self.schedules: dict[str, list[tuple[int, str]]] = {}
+        # stop_id -> trip_id -> [seconds since service-day start], for delay lookups
+        self._trip_times: dict[str, dict[str, list[int]]] = {}
         self._configured_stops = list(self.stops)
         # Set when auto-discovery found more stops than MAX_AUTO_DISCOVERED_STOPS
         self.discovered_stop_count = 0
@@ -207,6 +212,12 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         self.route_stops = static.route_stops
         self.calendar = static.calendar
         self.schedules = static.schedules
+        self._trip_times = {}
+        for stop_id, entries in self.schedules.items():
+            by_trip: dict[str, list[int]] = {}
+            for secs, trip_id in entries:
+                by_trip.setdefault(trip_id, []).append(secs)
+            self._trip_times[stop_id] = by_trip
 
     def _apply_static_gtfs(self) -> None:
         """Work out monitored stops and stop->route grouping from fresh static data."""
@@ -286,10 +297,42 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             "scheduled_time": None,
             "delay": None,
             "delay_minutes": None,
+            "delay_source": None,
             "realtime": False,
             "vehicle_id": None,
             "vehicle_label": None,
         }
+
+    def _timetabled_time(
+        self, stop_id: str, trip_id: str, service_date: date | None, around_ts: int
+    ) -> int | None:
+        """Timetabled time of a trip at a stop, for the run closest to a live time.
+
+        Used to work out delays, since Adelaide Metro's feed doesn't send them.
+        """
+        secs_list = self._trip_times.get(stop_id, {}).get(trip_id)
+        if not secs_list:
+            return None
+        tz = dt_util.get_default_time_zone()
+        trip = self.trip_index.get(trip_id)
+        if service_date is not None:
+            days = [service_date]
+        else:
+            live_day = datetime.fromtimestamp(around_ts, tz).date()
+            days = [live_day - timedelta(days=1), live_day]
+            if trip and trip.service_id:
+                days = [d for d in days if trip.service_id in self.calendar.active_services(d)] or days
+        best = None
+        for day in days:
+            base = service_day_start(day, tz).timestamp()
+            for secs in secs_list:
+                ts = int(base + secs)
+                if best is None or abs(ts - around_ts) < abs(best - around_ts):
+                    best = ts
+        # A match more than a few hours off is a different run, not a delay
+        if best is None or abs(best - around_ts) > MAX_INFERRED_DELAY.total_seconds():
+            return None
+        return best
 
     def _scheduled_time_for(
         self, stop_id: str, trip_id: str, service_date: date | None, now: datetime
@@ -417,6 +460,12 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
 
                 dep = self._departure(trip_id, route_id, stop_id, int(event.time))
                 delay = event.delay if event.HasField("delay") else None
+                delay_source = "feed" if delay is not None else None
+                if delay is None:
+                    timetabled = self._timetabled_time(stop_id, trip_id, service_date, int(event.time))
+                    if timetabled is not None:
+                        delay = int(event.time) - timetabled
+                        delay_source = "timetable"
                 dep.update(
                     {
                         "direction_id": (
@@ -427,6 +476,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
                         "stop_sequence": stu.stop_sequence if stu.HasField("stop_sequence") else None,
                         "delay": delay,
                         "delay_minutes": round(delay / 60) if delay is not None else None,
+                        "delay_source": delay_source,
                         "scheduled_time": int(event.time) - delay if delay is not None else None,
                         "realtime": True,
                         "vehicle_id": vehicle_id,
