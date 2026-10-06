@@ -8,6 +8,7 @@ import zipfile
 
 import pytest
 from google.transit import gtfs_realtime_pb2
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.adelaide_metro.const import (
@@ -17,8 +18,10 @@ from custom_components.adelaide_metro.const import (
     TRIP_UPDATES_URL,
     VEHICLE_POSITIONS_URL,
 )
+from custom_components.adelaide_metro.gtfs_cache import StaticGtfsCache
+from custom_components.adelaide_metro.schedule import service_day_start
 
-STATIC_FILES = {
+BASE_STATIC_FILES = {
     "stops.txt": "stop_id,stop_code,stop_name,stop_lat,stop_lon\n"
     "16490,16490,Seaford Meadows Railway Station,-35.17,138.49\n"
     "16491,16491,Adelaide Railway Station,-34.92,138.59\n",
@@ -32,28 +35,58 @@ STATIC_FILES = {
     "T1,08:45:00,08:45:00,16491,2\n"
     "T2,09:00:00,09:00:00,16491,1\n",
 }
+STATIC_FILES = BASE_STATIC_FILES
+
+# A timetabled trip (T3, service WK) leaves stop 16490 this many seconds from now
+SCHEDULED_IN_S = 1200
 
 
-def build_static_zip() -> bytes:
+def _gtfs_time(secs: int) -> str:
+    return f"{secs // 3600:02d}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
+
+
+def build_static_zip(scheduled_in_s: int | None = None) -> bytes:
+    """Static bundle; with ``scheduled_in_s`` it also has a calendar and trip T3 due then."""
+    files = dict(BASE_STATIC_FILES)
+    if scheduled_in_s is not None:
+        tz = dt_util.get_default_time_zone()
+        now = dt_util.now()
+        start = service_day_start(now.astimezone(tz).date(), tz)
+        secs = int((now - start).total_seconds()) + scheduled_in_s
+        files["trips.txt"] += "SEAFRD,WK,T3,City,0\n"
+        files["stop_times.txt"] += f"T3,{_gtfs_time(secs)},{_gtfs_time(secs)},16490,1\n"
+        files["calendar.txt"] = (
+            "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n"
+            "WK,1,1,1,1,1,1,1,20200101,20991231\n"
+        )
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        for name, content in STATIC_FILES.items():
+        for name, content in files.items():
             zf.writestr(name, content)
     return buf.getvalue()
 
 
-def build_trip_updates(departure_ts: int | None) -> bytes:
+def build_trip_updates(
+    departure_ts: int | None, delay: int | None = None, cancel_trip: str | None = None, trip_id: str = "T1"
+) -> bytes:
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.header.gtfs_realtime_version = "2.0"
+    if cancel_trip:
+        ent = feed.entity.add(id="cancel")
+        ent.trip_update.trip.trip_id = cancel_trip
+        ent.trip_update.trip.route_id = "SEAFRD"
+        ent.trip_update.trip.schedule_relationship = gtfs_realtime_pb2.TripDescriptor.CANCELED
     if departure_ts is not None:
         ent = feed.entity.add(id="tu1")
-        ent.trip_update.trip.trip_id = "T1"
+        ent.trip_update.trip.trip_id = trip_id
         ent.trip_update.trip.route_id = "SEAFRD"
         ent.trip_update.trip.direction_id = 0
         ent.trip_update.vehicle.id = "3020"
         ent.trip_update.vehicle.label = "3020"
         stu = ent.trip_update.stop_time_update.add(stop_id="16490", stop_sequence=1)
         stu.departure.time = departure_ts
+        if delay is not None:
+            stu.departure.delay = delay
     return feed.SerializeToString()
 
 
@@ -86,15 +119,37 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     yield
 
 
+@pytest.fixture(autouse=True)
+def isolated_gtfs_cache(tmp_path, monkeypatch):
+    """Keep the on-disk timetable cache per test instead of in the shared test config dir."""
+    original_init = StaticGtfsCache.__init__
+
+    def init(self, hass):
+        original_init(self, hass)
+        self._dir = tmp_path / "gtfs_cache"
+
+    monkeypatch.setattr(StaticGtfsCache, "__init__", init)
+    return tmp_path / "gtfs_cache"
+
+
 @pytest.fixture
-def feeds(aioclient_mock):
+def feeds(hass, aioclient_mock):
     """Serve feeds; call the returned function to change what is served."""
 
-    def serve(departure_in_s: int | None = 600, vehicles=("V1",), alert=None, static_status=200):
+    def serve(
+        departure_in_s: int | None = 600,
+        vehicles=("V1",),
+        alert=None,
+        static_status=200,
+        scheduled_in_s: int | None = None,
+        delay: int | None = None,
+        cancel_trip: str | None = None,
+        live_trip: str = "T1",
+    ):
         aioclient_mock.clear_requests()
-        aioclient_mock.get(STATIC_GTFS_URL, content=build_static_zip(), status=static_status)
+        aioclient_mock.get(STATIC_GTFS_URL, content=build_static_zip(scheduled_in_s), status=static_status)
         dep = int(time.time()) + departure_in_s if departure_in_s is not None else None
-        aioclient_mock.get(TRIP_UPDATES_URL, content=build_trip_updates(dep))
+        aioclient_mock.get(TRIP_UPDATES_URL, content=build_trip_updates(dep, delay, cancel_trip, live_trip))
         aioclient_mock.get(SERVICE_ALERTS_URL, content=build_alerts(alert))
         aioclient_mock.get(VEHICLE_POSITIONS_URL, content=build_vehicles(list(vehicles)))
 

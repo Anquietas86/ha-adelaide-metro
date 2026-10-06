@@ -33,6 +33,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities: list[SensorEntity] = [AdelaideMetroAlertsSensor(coordinator)]
     for stop_id in coordinator.stops:
         entities.append(AdelaideMetroNextDepartureSensor(coordinator, stop_id))
+        entities.append(AdelaideMetroNextDepartureTimeSensor(coordinator, stop_id))
         entities.append(AdelaideMetroUpcomingDeparturesSensor(coordinator, stop_id))
 
     for alert in coordinator.relevant_alerts():
@@ -134,7 +135,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 class AdelaideMetroBaseSensor(AssistantExposureMixin, CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
     # The departure list changes every poll; keep it out of the recorder database
-    _unrecorded_attributes = frozenset({"departures"})
+    _unrecorded_attributes = frozenset({"departures", "cancellations"})
 
     def __init__(self, coordinator, stop_id: str, suffix: str) -> None:
         super().__init__(coordinator)
@@ -158,6 +159,34 @@ class AdelaideMetroBaseSensor(AssistantExposureMixin, CoordinatorEntity, SensorE
     @property
     def _departures(self):
         return self.coordinator.data["departures"].get(self._stop_id, [])
+
+    @property
+    def _cancellations(self):
+        return self.coordinator.data.get("cancellations", {}).get(self._stop_id, [])
+
+    @property
+    def _next(self) -> dict | None:
+        return self._departures[0] if self._departures else None
+
+    def _next_attributes(self) -> dict:
+        """Details of the next departure, shared by the minutes and timestamp sensors."""
+        dep = self._next
+        if not dep:
+            return {}
+        scheduled = dep.get("scheduled_time")
+        return {
+            "arriving_at": dt_util.as_local(datetime.fromtimestamp(dep["time"], tz=UTC)).strftime("%H:%M"),
+            "scheduled_at": (
+                dt_util.as_local(datetime.fromtimestamp(scheduled, tz=UTC)).strftime("%H:%M")
+                if scheduled
+                else None
+            ),
+            "realtime": dep.get("realtime", False),
+            "delay_minutes": dep.get("delay_minutes"),
+            "delay_source": dep.get("delay_source"),
+            "route_id": dep.get("route_id"),
+            "trip_headsign": dep.get("trip_headsign"),
+        }
 
     @property
     def _direction_suffix(self) -> str | None:
@@ -210,6 +239,7 @@ class AdelaideMetroBaseSensor(AssistantExposureMixin, CoordinatorEntity, SensorE
             "longitude": self._stop.stop_lon if self._stop else None,
             "wheelchair_boarding": self._stop.wheelchair_boarding if self._stop else None,
             "departures": self._departures,
+            "cancellations": self._cancellations,
         }
 
 
@@ -233,13 +263,28 @@ class AdelaideMetroNextDepartureSensor(AdelaideMetroBaseSensor):
 
     @property
     def extra_state_attributes(self):
-        attrs = super().extra_state_attributes
-        if self._departures:
-            next_time = self._departures[0]["time"]
-            attrs["arriving_at"] = dt_util.as_local(
-                datetime.fromtimestamp(next_time, tz=UTC)
-            ).strftime("%H:%M")
-        return attrs
+        return {**super().extra_state_attributes, **self._next_attributes()}
+
+
+class AdelaideMetroNextDepartureTimeSensor(AdelaideMetroBaseSensor):
+    """Next departure as a timestamp, so dashboards can count down live."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator, stop_id: str) -> None:
+        super().__init__(coordinator, stop_id, "next departure time")
+        self._attr_unique_id = f"adelaide_metro_{stop_id}_next_departure_time"
+        self._attr_icon = "mdi:clock-outline"
+
+    @property
+    def native_value(self):
+        dep = self._next
+        return datetime.fromtimestamp(dep["time"], tz=UTC) if dep else None
+
+    @property
+    def extra_state_attributes(self):
+        # The minutes sensor already carries the full departure list
+        return self._next_attributes()
 
 
 class AdelaideMetroUpcomingDeparturesSensor(AdelaideMetroBaseSensor):
