@@ -23,6 +23,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import AdelaideMetroDataUpdateCoordinator
+from .entity import remove_empty_devices
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -62,6 +63,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Platforms have pruned their stale entities by now; drop devices left empty
+    remove_empty_devices(hass, entry)
     return True
 
 

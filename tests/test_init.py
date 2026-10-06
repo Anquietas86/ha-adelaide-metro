@@ -128,3 +128,31 @@ async def test_expose_respects_user_choice(hass: HomeAssistant, feeds, config_en
     assert await hass.config_entries.async_reload(config_entry.entry_id)
     await hass.async_block_till_done()
     assert not async_should_expose(hass, "conversation", entity_id)
+
+
+async def test_stale_entities_and_devices_cleaned_up(hass: HomeAssistant, feeds, config_entry) -> None:
+    from homeassistant.helpers import device_registry as dr
+
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    # Leftovers from an older setup: a stop no longer monitored and a removed route
+    old_device = dev_reg.async_get_or_create(
+        config_entry_id=config_entry.entry_id, identifiers={(DOMAIN, "stop_99999")}, name="Old stop"
+    )
+    ent_reg.async_get_or_create(
+        "sensor", DOMAIN, "adelaide_metro_99999_next_departure",
+        config_entry=config_entry, device_id=old_device.id,
+    )
+    ent_reg.async_get_or_create(
+        "binary_sensor", DOMAIN, "adelaide_metro_route_GLNELG_disruption", config_entry=config_entry
+    )
+
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert ent_reg.async_get_entity_id("sensor", DOMAIN, "adelaide_metro_99999_next_departure") is None
+    assert ent_reg.async_get_entity_id("binary_sensor", DOMAIN, "adelaide_metro_route_GLNELG_disruption") is None
+    assert dev_reg.async_get_device(identifiers={(DOMAIN, "stop_99999")}) is None
+    # Current entities and their devices stay
+    assert _next_departure_entity(hass)
+    assert dev_reg.async_get_device(identifiers={(DOMAIN, "route_SEAFRD")}) is not None

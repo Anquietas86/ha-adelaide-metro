@@ -12,16 +12,17 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .entity import AssistantExposureMixin
+from .entity import AssistantExposureMixin, remove_orphaned_entities
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        AdelaideMetroRouteDisruptionSensor(coordinator, route_id) for route_id in sorted(coordinator.routes)
-    )
+    entities = [AdelaideMetroRouteDisruptionSensor(coordinator, route_id) for route_id in sorted(coordinator.routes)]
+    # Disruption sensors for routes that were removed in options
+    remove_orphaned_entities(hass, entry, "binary_sensor", {e.unique_id for e in entities})
+    async_add_entities(entities)
 
 
 class AdelaideMetroRouteDisruptionSensor(AssistantExposureMixin, CoordinatorEntity, BinarySensorEntity):
