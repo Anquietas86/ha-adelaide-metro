@@ -3,52 +3,82 @@
     "step": {
       "user": {
         "title": "Adelaide Metro",
-        "description": "Enter the route IDs you want to monitor (e.g. SEAFRD,GLNELG).\n\nStop IDs are optional — leave blank to track all stops on selected routes, or enter specific stop IDs to filter further.",
+        "description": "Pick the routes you want to monitor. You'll choose stops on the next screen.",
         "data": {
-          "routes": "Route IDs (comma separated)",
-          "stops": "Stop IDs (comma separated, optional)",
-          "max_departures": "Maximum departures to keep",
+          "routes": "Routes",
+          "max_departures": "Maximum departures to keep per stop",
           "refresh_interval": "Refresh interval in seconds",
           "expose_to_assistants": "Expose to assistants",
-          "static_gtfs_refresh_hours": "Static GTFS refresh interval in hours",
+          "static_gtfs_refresh_hours": "Timetable refresh interval in hours",
           "alert_grace_minutes": "Alert grace period in minutes"
+        }
+      },
+      "stops": {
+        "title": "Choose stops",
+        "description": "Pick the stops you care about. Leave empty to monitor every stop on your routes (up to {limit} stops).",
+        "data": {
+          "stops": "Stops"
         }
       }
     },
     "error": {
-      "no_routes": "Enter at least one route ID (e.g. SEAFRD).",
+      "no_routes": "Pick at least one route.",
       "invalid_max_departures": "Maximum departures must be at least 1.",
       "invalid_refresh_interval": "Refresh interval must be at least 15 seconds.",
-      "invalid_static_gtfs_refresh_hours": "Static GTFS refresh interval must be at least 1 hour.",
+      "invalid_static_gtfs_refresh_hours": "Timetable refresh interval must be at least 1 hour.",
       "invalid_alert_grace_minutes": "Alert grace period cannot be negative."
     },
     "abort": {
       "already_configured": "These routes are already configured.",
-      "single_instance_allowed": "Adelaide Metro is already configured. Add more routes from its Configure menu."
+      "single_instance_allowed": "Adelaide Metro is already configured. Add more routes from its Configure menu.",
+      "cannot_connect": "Couldn't download the Adelaide Metro timetable. Check your connection and try again."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Adelaide Metro options",
-        "description": "Edit routes, stops, update behavior, and assistant exposure.\n\nRoutes are required. Leave stops blank to auto-discover all stops on selected routes.",
+        "description": "Edit your routes and update behaviour. You'll choose stops on the next screen.",
         "data": {
-          "routes": "Route IDs (comma separated)",
-          "stops": "Stop IDs (comma separated, optional)",
-          "max_departures": "Maximum departures to keep",
+          "routes": "Routes",
+          "max_departures": "Maximum departures to keep per stop",
           "refresh_interval": "Refresh interval in seconds",
           "expose_to_assistants": "Expose to assistants",
-          "static_gtfs_refresh_hours": "Static GTFS refresh interval in hours",
+          "static_gtfs_refresh_hours": "Timetable refresh interval in hours",
           "alert_grace_minutes": "Alert grace period in minutes"
+        }
+      },
+      "stops": {
+        "title": "Choose stops",
+        "description": "Pick the stops you care about. Leave empty to monitor every stop on your routes (up to {limit} stops).",
+        "data": {
+          "stops": "Stops"
         }
       }
     },
     "error": {
-      "no_routes": "Enter at least one route ID (e.g. SEAFRD).",
+      "no_routes": "Pick at least one route.",
       "invalid_max_departures": "Maximum departures must be at least 1.",
       "invalid_refresh_interval": "Refresh interval must be at least 15 seconds.",
-      "invalid_static_gtfs_refresh_hours": "Static GTFS refresh interval must be at least 1 hour.",
+      "invalid_static_gtfs_refresh_hours": "Timetable refresh interval must be at least 1 hour.",
       "invalid_alert_grace_minutes": "Alert grace period cannot be negative."
+    },
+    "abort": {
+      "cannot_connect": "Couldn't download the Adelaide Metro timetable. Check your connection and try again."
+    }
+  },
+  "issues": {
+    "unknown_routes": {
+      "title": "Unknown Adelaide Metro routes",
+      "description": "These configured routes aren't in the current timetable: {items}. They may have been renamed or withdrawn. Open the integration's Configure menu to update your routes."
+    },
+    "unknown_stops": {
+      "title": "Unknown Adelaide Metro stops",
+      "description": "These configured stops aren't in the current timetable: {items}. Open the integration's Configure menu to update your stops."
+    },
+    "too_many_stops": {
+      "title": "Too many Adelaide Metro stops",
+      "description": "Your routes have {found} stops, so only the first {limit} are being monitored. Open the integration's Configure menu and pick the stops you need."
     }
   }
 }

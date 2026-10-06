@@ -4,7 +4,7 @@ import csv
 import logging
 import zipfile
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 
 from google.transit import gtfs_realtime_pb2
@@ -12,10 +12,10 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     SERVICE_ALERTS_URL,
-    STATIC_GTFS_URL,
     TRIP_UPDATES_URL,
     VEHICLE_POSITIONS_URL,
 )
+from .schedule import WEEKDAYS, ServiceCalendar, parse_gtfs_date, parse_gtfs_time
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -139,6 +139,7 @@ class TripInfo:
     trip_headsign: str | None
     direction_id: str | None
     wheelchair_accessible: str | None
+    service_id: str | None = None
 
 
 @dataclass
@@ -150,6 +151,9 @@ class StaticGtfs:
     stop_directions: dict[str, tuple[str, str]]
     stop_directions_raw: dict[str, set[tuple[str, str]]]
     route_stops: dict[str, set[str]]
+    calendar: ServiceCalendar = field(default_factory=ServiceCalendar)
+    # stop_id -> [(seconds since service-day start, trip_id)], sorted; only for monitored stops/routes
+    schedules: dict[str, list[tuple[int, str]]] = field(default_factory=dict)
 
 
 class AdelaideMetroApiClient:
@@ -218,22 +222,47 @@ class AdelaideMetroApiClient:
         feed.ParseFromString(data)
         return feed
 
-    async def async_fetch_static_gtfs(self) -> StaticGtfs:
-        async with self._session.get(STATIC_GTFS_URL) as resp:
-            resp.raise_for_status()
-            data = await resp.read()
-
-        # Unzipping and parsing stop_times.txt takes seconds; keep it off the event loop.
-        return await self.hass.async_add_executor_job(parse_static_gtfs, data)
-
 
 def _read_csv(zf: zipfile.ZipFile, name: str):
     with zf.open(name) as f:
         yield from csv.DictReader(line.decode("utf-8-sig") for line in f)
 
 
-def parse_static_gtfs(data: bytes) -> StaticGtfs:
-    """Parse a static GTFS zip. Blocking; run in an executor."""
+def _read_calendar(zf: zipfile.ZipFile) -> ServiceCalendar:
+    calendar = ServiceCalendar()
+    names = set(zf.namelist())
+    if "calendar.txt" in names:
+        for row in _read_csv(zf, "calendar.txt"):
+            service_id = row.get("service_id")
+            start = parse_gtfs_date(row.get("start_date", ""))
+            end = parse_gtfs_date(row.get("end_date", ""))
+            if not service_id or not start or not end:
+                continue
+            days = tuple(row.get(day, "0").strip() == "1" for day in WEEKDAYS)
+            calendar.weekly[service_id] = (days, start, end)
+    if "calendar_dates.txt" in names:
+        for row in _read_csv(zf, "calendar_dates.txt"):
+            service_id = row.get("service_id")
+            day = parse_gtfs_date(row.get("date", ""))
+            try:
+                exception_type = int(row.get("exception_type", ""))
+            except ValueError:
+                continue
+            if service_id and day:
+                calendar.exceptions.setdefault(day, {})[service_id] = exception_type
+    return calendar
+
+
+def parse_static_gtfs(
+    data: bytes,
+    routes: set[str] | frozenset[str] = frozenset(),
+    stops: set[str] | frozenset[str] = frozenset(),
+) -> StaticGtfs:
+    """Parse a static GTFS zip. Blocking; run in an executor.
+
+    Timetables are only kept for ``stops`` (when given) or for every stop on
+    ``routes`` (when no stops are given), to keep memory down.
+    """
     with zipfile.ZipFile(BytesIO(data)) as zf:
         stops: dict[str, StopInfo] = {}
         for row in _read_csv(zf, "stops.txt"):
@@ -285,6 +314,7 @@ def parse_static_gtfs(data: bytes) -> StaticGtfs:
                 trip_headsign=headsign or None,
                 direction_id=direction_id or None,
                 wheelchair_accessible=row.get("wheelchair_accessible") or None,
+                service_id=row.get("service_id") or None,
             )
         # Pick the alphabetically first headsign per (route, direction) so names are stable
         direction_headsigns = {k: min(v) for k, v in headsigns.items()}
@@ -293,16 +323,24 @@ def parse_static_gtfs(data: bytes) -> StaticGtfs:
         # stop -> {(route, direction)} and route -> {stops}.
         stop_directions_raw: dict[str, set[tuple[str, str]]] = defaultdict(set)
         route_stops: dict[str, set[str]] = defaultdict(set)
+        schedules: dict[str, list[tuple[int, str]]] = defaultdict(list)
         for row in _read_csv(zf, "stop_times.txt"):
             stop_id = row.get("stop_id")
             trip = trips.get(row.get("trip_id"))
             if not trip or not stop_id or not trip.route_id:
                 continue
             route_stops[trip.route_id].add(stop_id)
+            if (stop_id in stops) if stops else (trip.route_id in routes):
+                secs = parse_gtfs_time(row.get("departure_time") or row.get("arrival_time") or "")
+                if secs is not None:
+                    schedules[stop_id].append((secs, trip.trip_id))
             if trip.direction_id is not None:
                 stop_directions_raw[stop_id].add((trip.route_id, trip.direction_id))
         # Each stop typically maps to one (route, direction) — take first alphabetically
         stop_directions = {stop_id: min(dirs) for stop_id, dirs in stop_directions_raw.items() if dirs}
+        for times in schedules.values():
+            times.sort()
+        calendar = _read_calendar(zf)
 
     return StaticGtfs(
         stops=stops,
@@ -312,4 +350,6 @@ def parse_static_gtfs(data: bytes) -> StaticGtfs:
         stop_directions=stop_directions,
         stop_directions_raw=dict(stop_directions_raw),
         route_stops=dict(route_stops),
+        calendar=calendar,
+        schedules=dict(schedules),
     )

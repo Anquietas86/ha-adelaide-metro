@@ -10,14 +10,17 @@ A HACS-compatible Home Assistant custom integration for Adelaide Metro realtime 
 ## Features
 
 ### Route-based configuration
-- Configure by **route ID** (e.g. `SEAFRD`, `GLNELG`) — the integration discovers all stops automatically
-- Optionally filter to specific stop IDs if you only want a subset
+- Pick your routes from a searchable list, then pick the stops you care about (shown with their direction)
+- Leave stops empty to monitor every stop on your routes, up to 40 stops
 
 ### Realtime departures
 - Stop-based realtime departure monitoring using Adelaide Metro GTFS Realtime Trip Updates
+- Gaps in the live feed are filled from the published timetable; each departure says whether it is `realtime` or scheduled
 - Per-stop sensors:
-  - **Next departure** — minutes until the next service, suitable for dashboards and automations
+  - **Next departure** — minutes until the next service, with delay, scheduled time and live/timetable attributes
+  - **Next departure time** — the same departure as a timestamp, so dashboards show a live countdown
   - **Upcoming departures** — count of upcoming services in the next period
+- Cancelled and skipped services are listed in a `cancellations` attribute instead of showing as departures
 - Direction-aware naming using trip headsigns
   - Example: `Seaford Meadows Railway Station (City-bound)`
   - Example: `Seaford Meadows Railway Station (Seaford-bound)`
@@ -30,12 +33,13 @@ A HACS-compatible Home Assistant custom integration for Adelaide Metro realtime 
 - Filtered to vehicles on your configured routes
 
 ### Static GTFS enrichment
-- Pulls the latest Adelaide Metro static GTFS bundle on startup (and periodically thereafter)
+- Downloads the Adelaide Metro static GTFS bundle, caches it on disk, and only re-downloads when it has changed
 - Enriches entities with stop names, stop codes, coordinates, route names and trip headsigns from:
   - `stops.txt`
   - `routes.txt`
   - `trips.txt`
   - `stop_times.txt`
+  - `calendar.txt` / `calendar_dates.txt` (for timetabled departures)
 
 ### Service alerts
 - Polls Adelaide Metro GTFS Realtime Service Alerts
@@ -44,6 +48,11 @@ A HACS-compatible Home Assistant custom integration for Adelaide Metro realtime 
   - **separate alert entities** for alerts relevant to configured stops/routes only
 - Alert entities are exposed to Home Assistant Assist by default
 - Configurable grace period before cleared alerts are removed (default 30 min)
+- A **Disruption** binary sensor per route, on when an alert or a cancelled trip affects that route
+
+### Repairs and diagnostics
+- Repair notices when a configured route or stop no longer exists, or when auto-discovery hit the 40-stop limit
+- Download diagnostics from the integration page to attach to bug reports
 
 ### Refresh service
 - `adelaide_metro.refresh` — force-refresh all data via automations or scripts
@@ -69,8 +78,8 @@ During setup you will be asked for:
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| Route IDs | Comma separated route IDs to monitor (e.g. `SEAFRD,GLNELG`) | required |
-| Stop IDs | Comma separated stop IDs to filter (optional — leave blank for all stops on route) | none |
+| Routes | Routes to monitor, picked from the timetable | required |
+| Stops | Stops to monitor (next screen; leave empty for every stop on your routes, up to 40) | none |
 | Maximum departures | Max upcoming services to track per stop | 5 |
 | Refresh interval | Seconds between realtime data refreshes | 60 |
 | Expose to assistants | Auto-expose entities to Assist and Google Assistant | on |
@@ -79,9 +88,9 @@ During setup you will be asked for:
 
 All settings can be edited after setup via **Settings → Devices & Services → Adelaide Metro Realtime → Configure**.
 
-## Finding route IDs
+## Route IDs
 
-Route IDs are short codes from the Adelaide Metro static GTFS feed. Some examples:
+You pick routes from a list during setup. For reference, route IDs are short codes from the Adelaide Metro static GTFS feed. Some examples:
 
 | Route | Route ID |
 |-------|----------|
@@ -94,23 +103,19 @@ Route IDs are short codes from the Adelaide Metro static GTFS feed. Some example
 | Glenelg tram | GLNELG |
 | O-Bahn (city) | OBAHN |
 
-To find route IDs for other services, download the latest static GTFS from `https://gtfs.adelaidemetro.com.au/v1/static/latest/google_transit.zip` and check `routes.txt`.
+## Stops
 
-## Finding stop IDs (optional)
-
-Stop IDs are numeric identifiers. You only need these if you want to limit which stops are tracked — otherwise the integration auto-discovers all stops on your selected routes.
-
-To find specific stop IDs:
-- Download the latest static GTFS from `https://gtfs.adelaidemetro.com.au/v1/static/latest/google_transit.zip`
-- Open `stops.txt` and search for your station
-
-For stations with multiple platforms/directions, add the individual stop IDs per platform.
+Stops for your chosen routes are listed with their stop code and direction (e.g. `Seaford Meadows Railway Station (16490) → City`). Stations with several platforms have one entry per platform and direction.
 
 ## Entity types
 
 ### Per configured stop
 - `Next departure` — minutes until next service
+- `Next departure time` — timestamp of next service
 - `Upcoming departures` — count of next services
+
+### Per configured route
+- `Disruption` — on when an alert or cancellation affects the route
 
 ### Per vehicle
 - `device_tracker.*` — GPS position on all maps (auto-discovered)

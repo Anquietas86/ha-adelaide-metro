@@ -1,5 +1,5 @@
 DOMAIN = "adelaide_metro"
-PLATFORMS = ["sensor", "device_tracker"]
+PLATFORMS = ["binary_sensor", "sensor", "device_tracker"]
 
 CONF_ROUTES = "routes"
 CONF_STOPS = "stops"
@@ -16,6 +16,9 @@ DEFAULT_MAX_DEPARTURES = 5
 DEFAULT_EXPOSE_TO_ASSISTANTS = True
 DEFAULT_STATIC_GTFS_REFRESH_HOURS = 24
 DEFAULT_ALERT_GRACE_MINUTES = 30
+
+# Leaving stops blank monitors at most this many stops per entry
+MAX_AUTO_DISCOVERED_STOPS = 40
 
 REALTIME_BASE_URL = "https://gtfs.adelaidemetro.com.au/v1/realtime"
 STATIC_GTFS_URL = "https://gtfs.adelaidemetro.com.au/v1/static/latest/google_transit.zip"
