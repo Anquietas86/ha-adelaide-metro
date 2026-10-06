@@ -33,9 +33,7 @@ async def async_setup_entry(
         known_vehicle_ids.add(vehicle_id)
 
     # Trackers from before a restart whose vehicles are no longer running
-    remove_orphaned_entities(
-        hass, entry, "device_tracker", (TRACKER_UNIQUE_ID_PREFIX,), {e.unique_id for e in entities}
-    )
+    remove_orphaned_entities(hass, entry, "device_tracker", {e.unique_id for e in entities})
     async_add_entities(entities)
 
     @callback

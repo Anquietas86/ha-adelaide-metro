@@ -47,13 +47,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         known_vehicle_ids.add(vehicle["id"])
 
     # Alerts and vehicles from before a restart that are no longer active
-    remove_orphaned_entities(
-        hass,
-        entry,
-        "sensor",
-        (ALERT_UNIQUE_ID_PREFIX, VEHICLE_UNIQUE_ID_PREFIX),
-        {e.unique_id for e in entities},
-    )
+    remove_orphaned_entities(hass, entry, "sensor", {e.unique_id for e in entities})
     async_add_entities(entities)
 
     @callback
