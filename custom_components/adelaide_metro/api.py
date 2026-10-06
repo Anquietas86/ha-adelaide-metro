@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 import zipfile
 from collections import defaultdict
 from dataclasses import dataclass
@@ -16,8 +17,19 @@ from .const import (
     VEHICLE_POSITIONS_URL,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 
 def _parse_tfnsw_vehicle_descriptor(vehicle_desc_msg) -> tuple[bool, int]:
+    """Parse the TFNSW extension, falling back to defaults on malformed data."""
+    try:
+        return _decode_tfnsw_vehicle_descriptor(vehicle_desc_msg.SerializeToString())
+    except (IndexError, ValueError):
+        _LOGGER.debug("Could not decode TFNSW vehicle descriptor extension")
+        return False, 0
+
+
+def _decode_tfnsw_vehicle_descriptor(raw: bytes) -> tuple[bool, int]:
     """Parse TFNSW extension (field 1999) from serialized VehicleDescriptor bytes.
 
     Adelaide Metro uses a custom protobuf extension on VehicleDescriptor
@@ -26,8 +38,8 @@ def _parse_tfnsw_vehicle_descriptor(vehicle_desc_msg) -> tuple[bool, int]:
     wheelchair_accessible (int32, 0 or 1, default 0).
 
     Returns (air_conditioned, wheelchair_accessible) or (False, 0) if absent.
+    Raises IndexError/ValueError on truncated or unsupported data.
     """
-    raw = vehicle_desc_msg.SerializeToString()
     pos = 0
     while pos < len(raw):
         tag = 0
@@ -67,6 +79,8 @@ def _parse_tfnsw_vehicle_descriptor(vehicle_desc_msg) -> tuple[bool, int]:
                         if not (sb & 0x80):
                             break
                     sfn = stag >> 3
+                    if stag & 0x7 != 0:
+                        raise ValueError(f"Unexpected wire type in extension field {sfn}")
                     sval = 0
                     sshift = 0
                     while True:
@@ -90,6 +104,8 @@ def _parse_tfnsw_vehicle_descriptor(vehicle_desc_msg) -> tuple[bool, int]:
             pos += 8
         elif wire_type == 5:  # 32-bit
             pos += 4
+        else:
+            raise ValueError(f"Unsupported wire type {wire_type}")
     return False, 0
 
 
@@ -123,6 +139,17 @@ class TripInfo:
     trip_headsign: str | None
     direction_id: str | None
     wheelchair_accessible: str | None
+
+
+@dataclass
+class StaticGtfs:
+    stops: dict[str, StopInfo]
+    routes: dict[str, RouteInfo]
+    trips: dict[str, TripInfo]
+    direction_headsigns: dict[tuple[str, str], str]
+    stop_directions: dict[str, tuple[str, str]]
+    stop_directions_raw: dict[str, set[tuple[str, str]]]
+    route_stops: dict[str, set[str]]
 
 
 class AdelaideMetroApiClient:
@@ -191,145 +218,98 @@ class AdelaideMetroApiClient:
         feed.ParseFromString(data)
         return feed
 
-    async def async_fetch_static_gtfs(self) -> tuple[
-        dict[str, StopInfo],
-        dict[str, RouteInfo],
-        dict[str, TripInfo],
-        dict[tuple[str, str], str],
-        dict[str, tuple[str, str]],
-        dict[str, set[tuple[str, str]]],
-        dict[str, set[str]],
-    ]:
+    async def async_fetch_static_gtfs(self) -> StaticGtfs:
         async with self._session.get(STATIC_GTFS_URL) as resp:
             resp.raise_for_status()
             data = await resp.read()
 
-        zf = zipfile.ZipFile(BytesIO(data))
-        stops = self._read_stops(zf)
-        routes = self._read_routes(zf)
-        trips = self._read_trips(zf)
-        direction_headsigns = self._read_direction_headsigns(zf)
-        stop_directions, stop_directions_raw = self._read_stop_directions(zf, trips)
-        route_stops = self._read_route_stops(zf)
-        return stops, routes, trips, direction_headsigns, stop_directions, stop_directions_raw, route_stops
+        # Unzipping and parsing stop_times.txt takes seconds; keep it off the event loop.
+        return await self.hass.async_add_executor_job(parse_static_gtfs, data)
 
-    def _read_stops(self, zf: zipfile.ZipFile) -> dict[str, StopInfo]:
-        with zf.open("stops.txt") as f:
-            decoded = (line.decode("utf-8-sig") for line in f)
-            reader = csv.DictReader(decoded)
-            stops: dict[str, StopInfo] = {}
-            for row in reader:
-                stop_id = row.get("stop_id")
-                if not stop_id:
-                    continue
-                stops[stop_id] = StopInfo(
-                    stop_id=stop_id,
-                    stop_code=row.get("stop_code") or None,
-                    stop_name=row.get("stop_name") or None,
-                    stop_desc=row.get("stop_desc") or None,
-                    stop_lat=float(row["stop_lat"]) if row.get("stop_lat") else None,
-                    stop_lon=float(row["stop_lon"]) if row.get("stop_lon") else None,
-                    wheelchair_boarding=row.get("wheelchair_boarding") or None,
-                )
-        return stops
 
-    def _read_routes(self, zf: zipfile.ZipFile) -> dict[str, RouteInfo]:
-        with zf.open("routes.txt") as f:
-            decoded = (line.decode("utf-8-sig") for line in f)
-            reader = csv.DictReader(decoded)
-            routes: dict[str, RouteInfo] = {}
-            for row in reader:
-                route_id = row.get("route_id")
-                if not route_id:
-                    continue
-                routes[route_id] = RouteInfo(
-                    route_id=route_id,
-                    agency_id=row.get("agency_id") or None,
-                    route_short_name=row.get("route_short_name") or None,
-                    route_long_name=row.get("route_long_name") or None,
-                    route_desc=row.get("route_desc") or None,
-                    route_type=row.get("route_type") or None,
-                    route_color=row.get("route_color") or None,
-                    route_text_color=row.get("route_text_color") or None,
-                )
-        return routes
+def _read_csv(zf: zipfile.ZipFile, name: str):
+    with zf.open(name) as f:
+        yield from csv.DictReader(line.decode("utf-8-sig") for line in f)
 
-    def _read_trips(self, zf: zipfile.ZipFile) -> dict[str, TripInfo]:
-        with zf.open("trips.txt") as f:
-            decoded = (line.decode("utf-8-sig") for line in f)
-            reader = csv.DictReader(decoded)
-            trips: dict[str, TripInfo] = {}
-            for row in reader:
-                trip_id = row.get("trip_id")
-                if not trip_id:
-                    continue
-                trips[trip_id] = TripInfo(
-                    trip_id=trip_id,
-                    route_id=row.get("route_id") or None,
-                    trip_headsign=row.get("trip_headsign") or None,
-                    direction_id=row.get("direction_id") or None,
-                    wheelchair_accessible=row.get("wheelchair_accessible") or None,
-                )
-        return trips
 
-    def _read_direction_headsigns(self, zf: zipfile.ZipFile) -> dict[tuple[str, str], str]:
-        """Build a (route_id, direction_id) -> canonical headsign lookup from trips.txt."""
+def parse_static_gtfs(data: bytes) -> StaticGtfs:
+    """Parse a static GTFS zip. Blocking; run in an executor."""
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        stops: dict[str, StopInfo] = {}
+        for row in _read_csv(zf, "stops.txt"):
+            stop_id = row.get("stop_id")
+            if not stop_id:
+                continue
+            stops[stop_id] = StopInfo(
+                stop_id=stop_id,
+                stop_code=row.get("stop_code") or None,
+                stop_name=row.get("stop_name") or None,
+                stop_desc=row.get("stop_desc") or None,
+                stop_lat=float(row["stop_lat"]) if row.get("stop_lat") else None,
+                stop_lon=float(row["stop_lon"]) if row.get("stop_lon") else None,
+                wheelchair_boarding=row.get("wheelchair_boarding") or None,
+            )
+
+        routes: dict[str, RouteInfo] = {}
+        for row in _read_csv(zf, "routes.txt"):
+            route_id = row.get("route_id")
+            if not route_id:
+                continue
+            routes[route_id] = RouteInfo(
+                route_id=route_id,
+                agency_id=row.get("agency_id") or None,
+                route_short_name=row.get("route_short_name") or None,
+                route_long_name=row.get("route_long_name") or None,
+                route_desc=row.get("route_desc") or None,
+                route_type=row.get("route_type") or None,
+                route_color=row.get("route_color") or None,
+                route_text_color=row.get("route_text_color") or None,
+            )
+
+        # Single pass over trips.txt builds both the trip index and the
+        # (route_id, direction_id) -> headsign lookup.
+        trips: dict[str, TripInfo] = {}
         headsigns: dict[tuple[str, str], set[str]] = defaultdict(set)
-        with zf.open("trips.txt") as f:
-            decoded = (line.decode("utf-8-sig") for line in f)
-            reader = csv.DictReader(decoded)
-            for row in reader:
-                route_id = row.get("route_id")
-                direction_id = row.get("direction_id")
-                headsign = row.get("trip_headsign")
-                if route_id and direction_id is not None and headsign:
-                    headsigns[(route_id, direction_id)].add(headsign)
-        # Pick the most common / first headsign per (route, direction)
-        return {k: sorted(v)[0] for k, v in headsigns.items()}
+        for row in _read_csv(zf, "trips.txt"):
+            trip_id = row.get("trip_id")
+            route_id = row.get("route_id")
+            direction_id = row.get("direction_id")
+            headsign = row.get("trip_headsign")
+            if route_id and direction_id is not None and headsign:
+                headsigns[(route_id, direction_id)].add(headsign)
+            if not trip_id:
+                continue
+            trips[trip_id] = TripInfo(
+                trip_id=trip_id,
+                route_id=route_id or None,
+                trip_headsign=headsign or None,
+                direction_id=direction_id or None,
+                wheelchair_accessible=row.get("wheelchair_accessible") or None,
+            )
+        # Pick the alphabetically first headsign per (route, direction) so names are stable
+        direction_headsigns = {k: min(v) for k, v in headsigns.items()}
 
-    def _read_stop_directions(
-        self, zf: zipfile.ZipFile, trips: dict[str, TripInfo]
-    ) -> tuple[dict[str, tuple[str, str]], dict[str, set[tuple[str, str]]]]:
-        """Build stop_id -> (route_id, direction_id) lookups from stop_times.txt.
-
-        Returns (single_pick, raw) — single_pick picks one direction per stop,
-        raw preserves the full set for user-route preference matching.
-        """
-        raw: dict[str, set[tuple[str, str]]] = defaultdict(set)
-        with zf.open("stop_times.txt") as f:
-            decoded = (line.decode("utf-8-sig") for line in f)
-            reader = csv.DictReader(decoded)
-            for row in reader:
-                trip_id = row.get("trip_id")
-                stop_id = row.get("stop_id")
-                trip = trips.get(trip_id)
-                if trip and stop_id and trip.route_id and trip.direction_id is not None:
-                    raw[stop_id].add((trip.route_id, trip.direction_id))
-        # Each stop typically maps to one (route, direction) — take first alphabetically
-        single = {stop_id: sorted(dirs)[0] for stop_id, dirs in raw.items() if dirs}
-        return single, dict(raw)
-
-    def _read_route_stops(self, zf: zipfile.ZipFile) -> dict[str, set[str]]:
-        """Build a route_id -> set(stop_ids) mapping from stop_times.txt.
-
-        Used to auto-discover stops when none are manually configured.
-        """
+        # Single pass over stop_times.txt (by far the largest file) builds both
+        # stop -> {(route, direction)} and route -> {stops}.
+        stop_directions_raw: dict[str, set[tuple[str, str]]] = defaultdict(set)
         route_stops: dict[str, set[str]] = defaultdict(set)
-        with zf.open("trips.txt") as f:
-            decoded = (line.decode("utf-8-sig") for line in f)
-            reader = csv.DictReader(decoded)
-            trip_routes: dict[str, str] = {
-                row["trip_id"]: row["route_id"]
-                for row in reader
-                if row.get("trip_id") and row.get("route_id")
-            }
-        with zf.open("stop_times.txt") as f:
-            decoded = (line.decode("utf-8-sig") for line in f)
-            reader = csv.DictReader(decoded)
-            for row in reader:
-                trip_id = row.get("trip_id")
-                stop_id = row.get("stop_id")
-                route_id = trip_routes.get(trip_id)
-                if route_id and stop_id:
-                    route_stops[route_id].add(stop_id)
-        return dict(route_stops)
+        for row in _read_csv(zf, "stop_times.txt"):
+            stop_id = row.get("stop_id")
+            trip = trips.get(row.get("trip_id"))
+            if not trip or not stop_id or not trip.route_id:
+                continue
+            route_stops[trip.route_id].add(stop_id)
+            if trip.direction_id is not None:
+                stop_directions_raw[stop_id].add((trip.route_id, trip.direction_id))
+        # Each stop typically maps to one (route, direction) — take first alphabetically
+        stop_directions = {stop_id: min(dirs) for stop_id, dirs in stop_directions_raw.items() if dirs}
+
+    return StaticGtfs(
+        stops=stops,
+        routes=routes,
+        trips=trips,
+        direction_headsigns=direction_headsigns,
+        stop_directions=stop_directions,
+        stop_directions_raw=dict(stop_directions_raw),
+        route_stops=dict(route_stops),
+    )

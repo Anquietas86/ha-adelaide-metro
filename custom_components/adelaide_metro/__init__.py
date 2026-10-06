@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    CONF_ALERT_GRACE_MINUTES,
     CONF_EXPOSE_TO_ASSISTANTS,
     CONF_MAX_DEPARTURES,
     CONF_REFRESH_INTERVAL,
@@ -11,6 +14,7 @@ from .const import (
     CONF_ROUTES,
     CONF_STATIC_GTFS_REFRESH_HOURS,
     CONF_STOPS,
+    DEFAULT_ALERT_GRACE_MINUTES,
     DEFAULT_EXPOSE_TO_ASSISTANTS,
     DEFAULT_MAX_DEPARTURES,
     DEFAULT_REFRESH_INTERVAL,
@@ -19,6 +23,19 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import AdelaideMetroDataUpdateCoordinator
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    # Registered once here (not per entry) so it always refreshes every loaded
+    # entry, including ones reloaded after an options change.
+    async def _handle_refresh(call: ServiceCall) -> None:
+        for coordinator in list(hass.data.get(DOMAIN, {}).values()):
+            await coordinator.async_request_refresh()
+
+    hass.services.async_register(DOMAIN, "refresh", _handle_refresh)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -36,6 +53,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 CONF_REFRESH_INTERVAL: entry.data.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL),
                 CONF_EXPOSE_TO_ASSISTANTS: entry.data.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS),
                 CONF_STATIC_GTFS_REFRESH_HOURS: gtfs_hrs,
+                CONF_ALERT_GRACE_MINUTES: entry.data.get(CONF_ALERT_GRACE_MINUTES, DEFAULT_ALERT_GRACE_MINUTES),
             },
         )
 
@@ -44,19 +62,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Register the refresh service
-    async def _handle_refresh(call: ServiceCall) -> None:
-        await coordinator.async_request_refresh()
-
-    if not hass.services.has_service(DOMAIN, "refresh"):
-        hass.services.async_register(DOMAIN, "refresh", _handle_refresh)
-
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     return unload_ok

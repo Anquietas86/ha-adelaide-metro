@@ -1,7 +1,9 @@
 {
   "domain": "adelaide_metro",
   "name": "Adelaide Metro",
-  "codeowners": ["@Anquietas86"],
+  "codeowners": [
+    "@Anquietas86"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/Anquietas86/ha-adelaide-metro",
@@ -11,5 +13,6 @@
     "gtfs-realtime-bindings>=1.0.0",
     "protobuf>=4.25.3"
   ],
-  "version": "0.8.4"
+  "single_config_entry": true,
+  "version": "0.9.0"
 }

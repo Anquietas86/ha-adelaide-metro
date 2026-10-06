@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import zipfile
 from datetime import UTC, datetime, timedelta
 
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from aiohttp import ClientError
+from google.protobuf.message import DecodeError
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import AdelaideMetroApiClient
 from .const import (
     CONF_ALERT_GRACE_MINUTES,
+    CONF_EXPOSE_TO_ASSISTANTS,
     CONF_MAX_DEPARTURES,
     CONF_REFRESH_INTERVAL,
     CONF_ROUTE_FILTERS,
@@ -15,6 +20,7 @@ from .const import (
     CONF_STATIC_GTFS_REFRESH_HOURS,
     CONF_STOPS,
     DEFAULT_ALERT_GRACE_MINUTES,
+    DEFAULT_EXPOSE_TO_ASSISTANTS,
     DEFAULT_MAX_DEPARTURES,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STATIC_GTFS_REFRESH_HOURS,
@@ -61,9 +67,13 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             CONF_MAX_DEPARTURES,
             entry.data.get(CONF_MAX_DEPARTURES, DEFAULT_MAX_DEPARTURES),
         )
-        self._static_gtfs_refresh_hours = entry.options.get(
-            CONF_STATIC_GTFS_REFRESH_HOURS,
-            entry.data.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS),
+        # Never refresh the static bundle more than hourly, whatever the options say
+        self._static_gtfs_refresh_hours = max(
+            1,
+            entry.options.get(
+                CONF_STATIC_GTFS_REFRESH_HOURS,
+                entry.data.get(CONF_STATIC_GTFS_REFRESH_HOURS, DEFAULT_STATIC_GTFS_REFRESH_HOURS),
+            ),
         )
         self.stop_index = {}
         self.route_index = {}
@@ -74,9 +84,17 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         self.route_stops: dict[str, set[str]] = {}
         self.stop_to_route: dict[str, str] = {}
         self._last_static_gtfs_refresh: datetime | None = None
-        self.alert_grace_minutes = entry.options.get(
-            CONF_ALERT_GRACE_MINUTES,
-            entry.data.get(CONF_ALERT_GRACE_MINUTES, DEFAULT_ALERT_GRACE_MINUTES),
+        self.alert_grace_minutes = max(
+            0,
+            entry.options.get(
+                CONF_ALERT_GRACE_MINUTES,
+                entry.data.get(CONF_ALERT_GRACE_MINUTES, DEFAULT_ALERT_GRACE_MINUTES),
+            ),
+        )
+
+        self.expose_to_assistants = entry.options.get(
+            CONF_EXPOSE_TO_ASSISTANTS,
+            entry.data.get(CONF_EXPOSE_TO_ASSISTANTS, DEFAULT_EXPOSE_TO_ASSISTANTS),
         )
 
         refresh_secs = entry.options.get(
@@ -86,6 +104,7 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         super().__init__(
             hass,
             logger=_LOGGER,
+            config_entry=entry,
             name=DOMAIN,
             update_interval=timedelta(seconds=refresh_secs),
         )
@@ -117,20 +136,50 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
         return self.stop_to_route.get(stop_id)
 
     def relevant_vehicles(self) -> list[dict]:
-        """Filter vehicles to those on the user's configured routes."""
-        vehicles = self.data.get("vehicles", [])
-        monitored_route_ids = {
-            dep.get("route_id")
-            for departures in self.data.get("departures", {}).values()
-            for dep in departures
+        """Vehicles on the user's configured or monitored routes (computed once per update)."""
+        return self.data.get("relevant_vehicles", [])
+
+    def relevant_alerts(self) -> list[dict]:
+        """Alerts touching the user's stops or routes (computed once per update)."""
+        return self.data.get("relevant_alerts", [])
+
+    def _monitored_route_ids(self, departures: dict[str, list[dict]]) -> set[str]:
+        return {
+            dep["route_id"]
+            for deps in departures.values()
+            for dep in deps
             if dep.get("route_id")
         }
+
+    def _filter_vehicles(self, vehicles: list[dict], monitored_route_ids: set[str]) -> list[dict]:
+        return [
+            v for v in vehicles
+            if v.get("route_id") and (v["route_id"] in self.routes or v["route_id"] in monitored_route_ids)
+        ]
+
+    def _filter_alerts(self, alerts: list[dict], monitored_route_ids: set[str]) -> list[dict]:
+        stop_ids = set(self.stops)
         relevant = []
-        for vehicle in vehicles:
-            route_id = vehicle.get("route_id")
-            if route_id and (route_id in self.routes or route_id in monitored_route_ids):
-                relevant.append(vehicle)
+        for alert in alerts:
+            for informed in alert.get("informed_entities", []):
+                route_id = informed.get("route_id")
+                stop_id = informed.get("stop_id")
+                if (stop_id and stop_id in stop_ids) or (
+                    route_id and (route_id in self.routes or route_id in monitored_route_ids)
+                ):
+                    relevant.append(alert)
+                    break
         return relevant
+
+    async def _async_refresh_static_gtfs(self) -> None:
+        static = await self.api.async_fetch_static_gtfs()
+        self.stop_index = static.stops
+        self.route_index = static.routes
+        self.trip_index = static.trips
+        self.direction_headsigns = static.direction_headsigns
+        self.stop_directions = static.stop_directions
+        self.stop_directions_raw = static.stop_directions_raw
+        self.route_stops = static.route_stops
 
     async def _async_update_data(self):
         now = datetime.now(UTC)
@@ -144,16 +193,22 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
             )
         )
         if needs_static_refresh:
-            (
-                self.stop_index,
-                self.route_index,
-                self.trip_index,
-                self.direction_headsigns,
-                self.stop_directions,
-                self.stop_directions_raw,
-                self.route_stops,
-            ) = await self.api.async_fetch_static_gtfs()
-            self._last_static_gtfs_refresh = now
+            first_load = not self.stop_index
+            try:
+                await self._async_refresh_static_gtfs()
+            except (TimeoutError, ClientError, zipfile.BadZipFile, KeyError, ValueError) as err:
+                if first_load:
+                    raise UpdateFailed(f"Error fetching static GTFS data: {err}") from err
+                # Keep serving realtime data with the previous static bundle; retry next hour
+                _LOGGER.warning("Static GTFS refresh failed, keeping previous data: %s", err)
+                self._last_static_gtfs_refresh = now - timedelta(
+                    hours=self._static_gtfs_refresh_hours - 1
+                )
+                needs_static_refresh = False
+            else:
+                self._last_static_gtfs_refresh = now
+
+        if needs_static_refresh:
 
             # Auto-discover stops from routes when none were manually configured
             if not self.stops:
@@ -179,9 +234,14 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
 
             _LOGGER.debug("Refreshed static GTFS data")
 
-        feed = await self.api.async_fetch_trip_updates()
-        alerts_feed = await self.api.async_fetch_service_alerts()
-        vehicles = await self.api.async_fetch_vehicle_positions()
+        try:
+            feed, alerts_feed, vehicles = await asyncio.gather(
+                self.api.async_fetch_trip_updates(),
+                self.api.async_fetch_service_alerts(),
+                self.api.async_fetch_vehicle_positions(),
+            )
+        except (TimeoutError, ClientError, DecodeError) as err:
+            raise UpdateFailed(f"Error fetching realtime data: {err}") from err
         now_ts = now.timestamp()
         departures_by_stop: dict[str, list[dict]] = {stop_id: [] for stop_id in self.stops}
 
@@ -218,7 +278,11 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
                         "route_short_name": route.route_short_name if route else None,
                         "route_long_name": route.route_long_name if route else None,
                         "trip_headsign": trip.trip_headsign if trip else None,
-                        "direction_id": trip_update.trip.direction_id,
+                        "direction_id": (
+                            trip_update.trip.direction_id
+                            if trip_update.trip.HasField("direction_id")
+                            else None
+                        ),
                         "stop_id": stop_id,
                         "stop_sequence": stu.stop_sequence if stu.HasField("stop_sequence") else None,
                         "time": int(event.time),
@@ -258,7 +322,10 @@ class AdelaideMetroDataUpdateCoordinator(DataUpdateCoordinator):
                 }
             )
 
+        monitored_route_ids = self._monitored_route_ids(departures_by_stop)
         return {
+            "relevant_vehicles": self._filter_vehicles(vehicles, monitored_route_ids),
+            "relevant_alerts": self._filter_alerts(alerts, monitored_route_ids),
             "stops": self.stop_index,
             "routes": self.route_index,
             "trips": self.trip_index,
